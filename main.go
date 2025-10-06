@@ -117,40 +117,60 @@ func legalRange(board *Board, r, c int) (lo, hi int) {
 	return
 }
 
+// isPlacementFeasible checks if placing `tile` at (r,c) is feasible given remaining tiles
+// remaining should be produced by getRemainingTileCounts(state, myBoard)
 func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bool {
 	// Check upwards in column
 	for rr := r - 1; rr >= 0; rr-- {
 		v := board.Grid[rr][c]
-		if v != 0 && tile <= v { return false }
+		if v != 0 && tile <= v {
+			return false
+		}
 	}
+
 	// Check left in row
 	for cc := c - 1; cc >= 0; cc-- {
 		v := board.Grid[r][cc]
-		if v != 0 && tile <= v { return false }
+		if v != 0 && tile <= v {
+			return false
+		}
 	}
-	// Check downwards in column: all numbers below must exist
+
+	// Check downwards in column: all empty cells below must be fillable
 	minNeeded := tile + 1
 	for rr := r + 1; rr < BoardSize; rr++ {
-		if board.Grid[rr][c] != 0 {
-			if board.Grid[rr][c] < minNeeded { return false }
+		v := board.Grid[rr][c]
+		if v != 0 {
+			if v < minNeeded {
+				return false
+			}
 			break
 		}
+		if remaining[minNeeded] <= 0 {
+			return false
+		}
 		minNeeded++
-		if remaining[minNeeded] <= 0 { return false }
 	}
-	// Check right in row: all numbers to the right must exist
+
+	// Check right in row: all empty cells to the right must be fillable
 	minNeeded = tile + 1
 	for cc := c + 1; cc < BoardSize; cc++ {
-		if board.Grid[r][cc] != 0 {
-			if board.Grid[r][cc] < minNeeded { return false }
+		v := board.Grid[r][cc]
+		if v != 0 {
+			if v < minNeeded {
+				return false
+			}
 			break
 		}
+		if remaining[minNeeded] <= 0 {
+			return false
+		}
 		minNeeded++
-		if remaining[minNeeded] <= 0 { return false }
 	}
 
 	return true
 }
+
 
 // ---------------- AI Evaluation ----------------
 
