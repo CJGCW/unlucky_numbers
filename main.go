@@ -18,8 +18,10 @@ const (
 )
 
 type Move struct {
-	Type MoveType
-	Cell *Cell
+	Type    MoveType
+	Cell    *Cell
+	OldTile int     // only set if Type==Swap
+	Score   float64 // for ranking
 }
 
 type Board struct {
@@ -116,6 +118,50 @@ func legalRange(board *Board, r, c int) (lo, hi int) {
 	return
 }
 
+func copyBoard(b *Board) *Board {
+	newB := &Board{}
+	for r := 0; r < BoardSize; r++ {
+		for c := 0; c < BoardSize; c++ {
+			newB.Grid[r][c] = b.Grid[r][c]
+		}
+	}
+	return newB
+}
+func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bool {
+	// Check upwards in column
+	for rr := r - 1; rr >= 0; rr-- {
+		v := board.Grid[rr][c]
+		if v != 0 && tile <= v { return false }
+	}
+	// Check left in row
+	for cc := c - 1; cc >= 0; cc-- {
+		v := board.Grid[r][cc]
+		if v != 0 && tile <= v { return false }
+	}
+	// Check downwards in column: all numbers below must exist
+	minNeeded := tile + 1
+	for rr := r + 1; rr < BoardSize; rr++ {
+		if board.Grid[rr][c] != 0 {
+			if board.Grid[rr][c] < minNeeded { return false }
+			break
+		}
+		minNeeded++
+		if remaining[minNeeded] <= 0 { return false }
+	}
+	// Check right in row: all numbers to the right must exist
+	minNeeded = tile + 1
+	for cc := c + 1; cc < BoardSize; cc++ {
+		if board.Grid[r][cc] != 0 {
+			if board.Grid[r][cc] < minNeeded { return false }
+			break
+		}
+		minNeeded++
+		if remaining[minNeeded] <= 0 { return false }
+	}
+
+	return true
+}
+
 // ---------------- AI Evaluation ----------------
 
 // bestPlacement finds the best empty cell for tile, considering remaining tiles
@@ -151,13 +197,15 @@ func bestPlacement(board *Board, tile int, state *GameState) *Cell {
 	return best
 }
 
+// bestNPlacements returns the top N legal and feasible placements for a tile
 func bestNPlacements(board *Board, tile int, state *GameState, N int) []*Cell {
 	type scoredCell struct {
 		cell  *Cell
 		score float64
 	}
 	var candidates []scoredCell
-	remaining := remainingTiles(state)
+
+	remaining := getRemainingTileCounts(state, board)
 
 	for r := 0; r < BoardSize; r++ {
 		for c := 0; c < BoardSize; c++ {
@@ -165,25 +213,28 @@ func bestNPlacements(board *Board, tile int, state *GameState, N int) []*Cell {
 				continue
 			}
 
-			// Only consider truly legal placements
+			// Must be locally legal
 			if !isLegalPlacement(board, tile, r, c) {
 				continue
 			}
 
-			// Count how many remaining tiles can fit in this cell
+			// Must be feasible: can still fill row/column with remaining tiles
+			if !isPlacementFeasible(board, r, c, tile, remaining) {
+				continue
+			}
+
+			// Count how many remaining tiles could go here (fewer = higher priority)
 			count := 0
 			for t := 1; t <= 20; t++ {
-				if remaining[t] {
-					if isLegalPlacement(board, t, r, c) {
-						count++
-					}
+				if remaining[t] > 0 && isLegalPlacement(board, t, r, c) && isPlacementFeasible(board, r, c, t, remaining) {
+					count++
 				}
 			}
 			if count == 0 {
-				continue // placing here would block completion
+				continue
 			}
 
-			score := 1.0 / float64(count) // fewer options = higher priority
+			score := 1.0 / float64(count)
 			candidates = append(candidates, scoredCell{cell: &Cell{R: r, C: c}, score: score})
 		}
 	}
@@ -200,7 +251,127 @@ func bestNPlacements(board *Board, tile int, state *GameState, N int) []*Cell {
 	}
 	return top
 }
+// bestMoves returns the top N moves (placements or swaps) for a drawn tile
+func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
+	type scoredMove struct {
+		move Move
+		score float64
+	}
+	moves := []scoredMove{}
+	remaining := getRemainingTileCounts(state, board)
 
+	// --- Placements ---
+	for r := 0; r < BoardSize; r++ {
+		for c := 0; c < BoardSize; c++ {
+			if board.Grid[r][c] != 0 {
+				continue
+			}
+			if !isLegalPlacement(board, tile, r, c) {
+				continue
+			}
+			if !isPlacementFeasible(board, r, c, tile, remaining) {
+				continue
+			}
+			// count options for scoring
+			count := 0
+			for t := 1; t <= 20; t++ {
+				if remaining[t] > 0 && isLegalPlacement(board, t, r, c) && isPlacementFeasible(board, r, c, t, remaining) {
+					count++
+				}
+			}
+			if count == 0 {
+				continue
+			}
+			score := 1.0 / float64(count)
+			moves = append(moves, scoredMove{move: Move{Type: Place, Cell: &Cell{R: r, C: c}, Score: score}, score: score})
+		}
+	}
+
+	// --- Swaps ---
+	for r := 0; r < BoardSize; r++ {
+		for c := 0; c < BoardSize; c++ {
+			current := board.Grid[r][c]
+			if current == 0 || current == tile {
+				continue
+			}
+			// Swap only if new tile would fit here legally and be feasible
+			tmp := *board
+			tmp.Grid[r][c] = tile
+			if !isLegalPlacement(&tmp, tile, r, c) {
+				continue
+			}
+			if !isPlacementFeasible(&tmp, r, c, tile, remaining) {
+				continue
+			}
+			// Also ensure the removed tile can still go elsewhere?
+			// Optional: could check, but for now just scoring the swap placement
+			count := 0
+			for t := 1; t <= 20; t++ {
+				if remaining[t] > 0 && isLegalPlacement(&tmp, t, r, c) && isPlacementFeasible(&tmp, r, c, t, remaining) {
+					count++
+				}
+			}
+			if count == 0 {
+				continue
+			}
+			score := 1.0 / float64(count)
+			moves = append(moves, scoredMove{move: Move{Type: Swap, Cell: &Cell{R: r, C: c}, OldTile: current, Score: score}, score: score})
+		}
+	}
+
+	// --- Sort moves by score descending ---
+	sort.Slice(moves, func(i, j int) bool {
+		return moves[i].score > moves[j].score
+	})
+
+	// --- Return top N ---
+	result := []Move{}
+	for i := 0; i < len(moves) && i < N; i++ {
+		result = append(result, moves[i].move)
+	}
+	return result
+}
+
+
+// getRemainingTileCounts excludes opponent tiles from availability
+func getRemainingTileCounts(state *GameState, myBoard *Board) map[int]int {
+	counts := make(map[int]int)
+	numPlayers := len(state.Boards)
+	for i := 1; i <= 20; i++ {
+		counts[i] = 2 * numPlayers // two sets per player
+	}
+
+	for _, b := range state.Boards {
+		for r := 0; r < BoardSize; r++ {
+			for c := 0; c < BoardSize; c++ {
+				if b.Grid[r][c] != 0 {
+					if b == myBoard {
+						// decrement normally
+						counts[b.Grid[r][c]]--
+					} else {
+						// opponent tiles are "locked" — remove from remaining
+						counts[b.Grid[r][c]] = 0
+					}
+				}
+			}
+		}
+	}
+
+	for _, t := range state.Table {
+		counts[t]--
+	}
+	for _, d := range state.Draw {
+		counts[d]--
+	}
+
+	// Make sure no negative counts
+	for k, v := range counts {
+		if v < 0 {
+			counts[k] = 0
+		}
+	}
+	return counts
+}
 
 // FindBestMove returns the AI's best move
 func FindBestMove(board *Board, tile int, state *GameState) Move {
@@ -280,8 +451,8 @@ func main() {
 	board1.Grid = [BoardSize][BoardSize]int{
 		{5,0,0,9},
 		{0,7,0,0},
-		{0,0,8,0},
-		{0,0,0,12},
+		{0,0,8,19},
+		{0,0,19,20},
 	}
 	board2.Grid = [BoardSize][BoardSize]int{
 		{6,0,0,0},
@@ -297,18 +468,17 @@ func main() {
 
 	drawTile := 18
 	
-	move := FindBestMove(board2, drawTile, state)
-if move.Cell != nil {
-    fmt.Printf("Best move for tile %d: (%d,%d)\n", drawTile, move.Cell.R, move.Cell.C)
-} else {
-    fmt.Printf("Best move for tile %d: Discard\n", drawTile)
-}
-topCells := bestNPlacements(board2, drawTile, state, 3)
-fmt.Printf("Top %d placements for tile %d:\n", len(topCells), drawTile)
-for _, c := range topCells {
-	fmt.Printf("  (%d,%d)\n", c.R, c.C)
-}
-	//ApplyMove(board2, move, drawTile)
+	
+	topMoves := bestMoves(board2, drawTile, state, 3)
+
+	fmt.Printf("Top %d moves for tile %d:\n", len(topMoves), drawTile)
+	for _, m := range topMoves {
+		if m.Type == Place {
+			fmt.Printf("Place at (%d,%d) — score %.2f\n", m.Cell.R, m.Cell.C, m.Score)
+		} else if m.Type == Swap {
+			fmt.Printf("Swap with %d at (%d,%d) — score %.2f\n", m.OldTile, m.Cell.R, m.Cell.C, m.Score)
+		}
+	}
 
 	PrettyPrintBoardsGridCentered(state.Boards)
 }
