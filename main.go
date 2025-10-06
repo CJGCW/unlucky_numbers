@@ -107,7 +107,6 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 	return true
 }
 
-
 // legalRange returns min/max value that can go at (r,c)
 func legalRange(board *Board, r, c int) (lo, hi int) {
 	lo, hi = 1, 20
@@ -118,15 +117,6 @@ func legalRange(board *Board, r, c int) (lo, hi int) {
 	return
 }
 
-func copyBoard(b *Board) *Board {
-	newB := &Board{}
-	for r := 0; r < BoardSize; r++ {
-		for c := 0; c < BoardSize; c++ {
-			newB.Grid[r][c] = b.Grid[r][c]
-		}
-	}
-	return newB
-}
 func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bool {
 	// Check upwards in column
 	for rr := r - 1; rr >= 0; rr-- {
@@ -197,60 +187,7 @@ func bestPlacement(board *Board, tile int, state *GameState) *Cell {
 	return best
 }
 
-// bestNPlacements returns the top N legal and feasible placements for a tile
-func bestNPlacements(board *Board, tile int, state *GameState, N int) []*Cell {
-	type scoredCell struct {
-		cell  *Cell
-		score float64
-	}
-	var candidates []scoredCell
 
-	remaining := getRemainingTileCounts(state, board)
-
-	for r := 0; r < BoardSize; r++ {
-		for c := 0; c < BoardSize; c++ {
-			if board.Grid[r][c] != 0 {
-				continue
-			}
-
-			// Must be locally legal
-			if !isLegalPlacement(board, tile, r, c) {
-				continue
-			}
-
-			// Must be feasible: can still fill row/column with remaining tiles
-			if !isPlacementFeasible(board, r, c, tile, remaining) {
-				continue
-			}
-
-			// Count how many remaining tiles could go here (fewer = higher priority)
-			count := 0
-			for t := 1; t <= 20; t++ {
-				if remaining[t] > 0 && isLegalPlacement(board, t, r, c) && isPlacementFeasible(board, r, c, t, remaining) {
-					count++
-				}
-			}
-			if count == 0 {
-				continue
-			}
-
-			score := 1.0 / float64(count)
-			candidates = append(candidates, scoredCell{cell: &Cell{R: r, C: c}, score: score})
-		}
-	}
-
-	// Sort descending by score
-	sort.Slice(candidates, func(i, j int) bool {
-		return candidates[i].score > candidates[j].score
-	})
-
-	// Return top N
-	top := []*Cell{}
-	for i := 0; i < len(candidates) && i < N; i++ {
-		top = append(top, candidates[i].cell)
-	}
-	return top
-}
 // bestMoves returns the top N moves (placements or swaps) for a drawn tile
 func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
 	type scoredMove struct {
