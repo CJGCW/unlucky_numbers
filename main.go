@@ -117,10 +117,8 @@ func legalRange(board *Board, r, c int) (lo, hi int) {
 	return
 }
 
-// isPlacementFeasible checks if placing `tile` at (r,c) is feasible given remaining tiles
-// remaining should be produced by getRemainingTileCounts(state, myBoard)
 func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bool {
-	// Check upwards in column
+	// Check above
 	for rr := r - 1; rr >= 0; rr-- {
 		v := board.Grid[rr][c]
 		if v != 0 && tile <= v {
@@ -128,7 +126,7 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 		}
 	}
 
-	// Check left in row
+	// Check left
 	for cc := c - 1; cc >= 0; cc-- {
 		v := board.Grid[r][cc]
 		if v != 0 && tile <= v {
@@ -136,33 +134,49 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 		}
 	}
 
-	// Check downwards in column: all empty cells below must be fillable
+	// Check downward feasibility
 	minNeeded := tile + 1
 	for rr := r + 1; rr < BoardSize; rr++ {
 		v := board.Grid[rr][c]
 		if v != 0 {
-			if v < minNeeded {
+			if v <= tile {
 				return false
 			}
 			break
 		}
-		if remaining[minNeeded] <= 0 {
+		// don't instantly fail just because remaining[minNeeded] == 0,
+		// instead, look ahead for *any* available larger tile
+		hasFuture := false
+		for t := minNeeded; t <= 20; t++ {
+			if remaining[t] > 0 {
+				hasFuture = true
+				break
+			}
+		}
+		if !hasFuture {
 			return false
 		}
 		minNeeded++
 	}
 
-	// Check right in row: all empty cells to the right must be fillable
+	// Check rightward feasibility
 	minNeeded = tile + 1
 	for cc := c + 1; cc < BoardSize; cc++ {
 		v := board.Grid[r][cc]
 		if v != 0 {
-			if v < minNeeded {
+			if v <= tile {
 				return false
 			}
 			break
 		}
-		if remaining[minNeeded] <= 0 {
+		hasFuture := false
+		for t := minNeeded; t <= 20; t++ {
+			if remaining[t] > 0 {
+				hasFuture = true
+				break
+			}
+		}
+		if !hasFuture {
 			return false
 		}
 		minNeeded++
@@ -170,6 +184,7 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 
 	return true
 }
+
 
 
 // ---------------- AI Evaluation ----------------

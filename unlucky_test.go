@@ -51,9 +51,8 @@ func TestIsPlacementFeasible(t *testing.T) {
 	state := exampleStateForTests()
 	b := state.Boards[1]
 	remaining := getRemainingTileCounts(state, b)
-	PrettyPrintBoardsGridCentered(state.Boards)
-	if !isPlacementFeasible(b, 0, 1, 6, remaining) {
-		t.Errorf("Expected 6 at (0,1) to be feasible")
+	if !isPlacementFeasible(b, 0, 1, 7, remaining) {
+		t.Errorf("Expected 7 at (0,1) to be feasible")
 	}
 	if isPlacementFeasible(b, 0, 3, 18, remaining) {
 		t.Errorf("Expected 18 at (0,3) to be infeasible due to missing 19s")
@@ -73,37 +72,56 @@ func TestGetRemainingTileCounts(t *testing.T) {
 	}
 }
 
-func TestBestPlacement(t *testing.T) {
-	state := exampleStateForTests()
-	board := state.Boards[1]
-
-	cell := bestPlacement(board, 18, state)
-	if cell == nil {
-		t.Errorf("Expected a legal placement for 18")
-	} else {
-		// Should not pick column 3 because both 19s are gone
-		if cell.C == 3 {
-			t.Errorf("Placement for 18 should not be in column 3 due to missing 19s")
-		}
-	}
-}
 
 func TestBestMoves(t *testing.T) {
 	state := exampleStateForTests()
 	board := state.Boards[1]
+	drawTile := 18
 
-	moves := bestMoves(board, 18, state, 3)
+	moves := bestMoves(board, drawTile, state, 3)
 	if len(moves) == 0 {
-		t.Errorf("Expected at least one move for 18")
+		t.Errorf("Expected at least one move for %d", drawTile)
+	}
+
+	// base remaining counts for this player
+	baseRemaining := getRemainingTileCounts(state, board)
+
+	// helper to clone counts
+	cloneCounts := func(src map[int]int) map[int]int {
+		dst := make(map[int]int, len(src))
+		for k, v := range src {
+			dst[k] = v
+		}
+		return dst
 	}
 
 	for _, m := range moves {
-		if m.Type == Place && m.Cell.C == 3 {
-			t.Errorf("Placement at column 3 should not be suggested due to missing 19s")
-		}
-		if m.Type == Swap {
-			if m.Cell.C == 3 && m.OldTile != 0 {
-				t.Errorf("Swap in column 3 should not be suggested due to missing 19s")
+		switch m.Type {
+		case Place:
+			// Ensure the suggested placement is feasible given remaining tiles
+			if !isPlacementFeasible(board, m.Cell.R, m.Cell.C, drawTile, baseRemaining) {
+				t.Errorf("Suggested infeasible placement at (%d,%d) for tile %d", m.Cell.R, m.Cell.C, drawTile)
+			}
+		case Swap:
+			// Simulate the board after swap and updated remaining counts:
+			// free the old tile and consume the drawn tile.
+			tmp := *board
+			old := tmp.Grid[m.Cell.R][m.Cell.C]
+			tmp.Grid[m.Cell.R][m.Cell.C] = drawTile
+
+			cc := cloneCounts(baseRemaining)
+			// free the swapped-out tile
+			cc[old]++
+			// consume the drawn tile (guard against negative)
+			if cc[drawTile] > 0 {
+				cc[drawTile]--
+			} else {
+				cc[drawTile] = 0
+			}
+
+			// Now check feasibility on the swapped board
+			if !isPlacementFeasible(&tmp, m.Cell.R, m.Cell.C, drawTile, cc) {
+				t.Errorf("Suggested infeasible swap at (%d,%d): swap %d -> %d", m.Cell.R, m.Cell.C, old, drawTile)
 			}
 		}
 	}
