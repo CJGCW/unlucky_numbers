@@ -473,12 +473,9 @@ func contains(slice []int, val int) bool {
     return false
 }
 
-
-func main() {
-	rand.Seed(time.Now().UnixNano())
-	reader := bufio.NewReader(os.Stdin)
-
+func getNumberOfPlayers() int {
 	var numPlayers int
+	reader := bufio.NewReader(os.Stdin)
 	for {
 		fmt.Print("Enter number of players (2–4, default 2): ")
 		line, _ := reader.ReadString('\n')
@@ -494,9 +491,11 @@ func main() {
 		}
 		fmt.Println("Invalid input.")
 	}
+	return numPlayers
+}
 
-	state := &GameState{Boards: []*Board{}}
-
+func (state *GameState)setUpBoards(numPlayers int)  {
+	reader := bufio.NewReader(os.Stdin)
 	// --- Board setup ---
 	fmt.Print("Do you want to set up the boards manually? (y/N): ")
 	line, _ := reader.ReadString('\n')
@@ -546,12 +545,16 @@ func main() {
 				fmt.Printf("Enter 4 numbers for Player %d diagonal positions: ", p)
 				input, _ := reader.ReadString('\n')
 				input = strings.TrimSpace(input)
+				input = strings.ReplaceAll(input, ",", " ")
 				nums := strings.Fields(input)
 				for i := 0; i < BoardSize && i < len(nums); i++ {
 					t, err := strconv.Atoi(nums[i])
 					if err == nil {
 						b.Grid[i][i] = t
+					} else {
+						fmt.Println(err)
 					}
+					
 				}
 			}
 		} else {
@@ -562,11 +565,12 @@ func main() {
 		}
 		state.Boards = append(state.Boards, b)
 	}
+}
 
-	PrettyPrintBoardsGridCentered(state)
-
-	// --- Starting player ---
-	var current int
+func (state *GameState) playGame() {
+		var current int
+		reader := bufio.NewReader(os.Stdin)
+		numPlayers := len(state.Boards)
 	for {
 		fmt.Printf("Who starts (0–%d, default 0): ", numPlayers-1)
 		line, _ := reader.ReadString('\n')
@@ -581,10 +585,6 @@ func main() {
 			break
 		}
 	}
-
-	fmt.Println("Game start! Type a number to play, r for recommend, or t to table it.")
-
-	// --- Main game loop ---
 	for {
     	fmt.Printf("\nPlayer %d's turn — enter drawn tile or 'p' to pick from table (blank to quit): ", current)
     	line, _ := reader.ReadString('\n')
@@ -593,7 +593,7 @@ func main() {
     	    fmt.Println("Exiting game.")
     	    return
     	}
-	
+
     	var tile int
     	if line == "p" {
     	    if len(state.Table) == 0 {
@@ -626,10 +626,19 @@ func main() {
     	    }
     	    tile = t
     	}
-	
-    	board := state.Boards[current]
 
-		for {
+		state.playerTurn(current, tile)
+		
+
+		PrettyPrintBoardsGridCentered(state)
+		current = (current + 1) % len(state.Boards)
+	}
+}
+
+func (state *GameState) playerTurn(current int, tile int) {
+		reader := bufio.NewReader(os.Stdin)
+    	board := state.Boards[current]
+	for {
 			fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
 			action, _ := reader.ReadString('\n')
 			action = strings.TrimSpace(action)
@@ -693,8 +702,25 @@ func main() {
 
 			fmt.Println("Invalid input, try again.")
 		}
+}
 
-		PrettyPrintBoardsGridCentered(state)
-		current = (current + 1) % numPlayers
-	}
+func main() {
+	rand.Seed(time.Now().UnixNano())
+
+	var numPlayers = getNumberOfPlayers()
+	
+	
+	state := &GameState{Boards: []*Board{}}
+
+	state.setUpBoards(numPlayers)
+
+	PrettyPrintBoardsGridCentered(state)
+
+	// --- Starting player ---
+	
+	state.playGame()
+	
+
+	// --- Main game loop ---
+	
 }
