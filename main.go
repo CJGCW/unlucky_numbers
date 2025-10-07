@@ -68,6 +68,7 @@ func remainingTiles(state *GameState) map[int]bool {
 	}
 	return remaining
 }
+
 func isLegalPlacement(board *Board, val, r, c int) bool {
 
 	// Check column above
@@ -112,6 +113,7 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 
 	return true
 }
+
 
 // legalRange returns min/max value that can go at (r,c)
 func legalRange(board *Board, r, c int) (lo, hi int) {
@@ -462,6 +464,16 @@ func PrettyPrintBoardsGridCentered(state *GameState) {
 	fmt.Println()
 }
 
+func contains(slice []int, val int) bool {
+    for _, v := range slice {
+        if v == val {
+            return true
+        }
+    }
+    return false
+}
+
+
 func main() {
 	rand.Seed(time.Now().UnixNano())
 	reader := bufio.NewReader(os.Stdin)
@@ -486,27 +498,27 @@ func main() {
 	state := &GameState{Boards: []*Board{}}
 
 	// --- Board setup ---
-fmt.Print("Do you want to set up the boards manually? (y/N): ")
-line, _ := reader.ReadString('\n')
-line = strings.TrimSpace(strings.ToLower(line))
-setupManual := line == "y" || line == "yes"
+	fmt.Print("Do you want to set up the boards manually? (y/N): ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+	setupManual := line == "y" || line == "yes"
 
-var setupType string
-if setupManual {
-	for {
-		fmt.Print("Initial (diagonal numbers) or advanced (enter r,c,t arrays)? (i/a, default i): ")
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(strings.ToLower(line))
-		if line == "" {
-			setupType = "i"
-			break
-		}
-		if line == "i" || line == "a" {
-			setupType = line
-			break
+	var setupType string
+	if setupManual {
+		for {
+			fmt.Print("Initial (diagonal numbers) or advanced (enter r,c,t arrays)? (i/a, default i): ")
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(strings.ToLower(line))
+			if line == "" {
+				setupType = "i"
+				break
+			}
+			if line == "i" || line == "a" {
+				setupType = line
+				break
+			}
 		}
 	}
-}
 
 	for p := 0; p < numPlayers; p++ {
 		b := &Board{}
@@ -549,8 +561,6 @@ if setupManual {
 			}
 		}
 		state.Boards = append(state.Boards, b)
-
-
 	}
 
 	PrettyPrintBoardsGridCentered(state)
@@ -576,20 +586,48 @@ if setupManual {
 
 	// --- Main game loop ---
 	for {
-		fmt.Printf("\nPlayer %d's turn — enter drawn tile (blank to quit): ", current)
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" {
-			fmt.Println("Exiting game.")
-			break
-		}
-		tile, err := strconv.Atoi(line)
-		if err != nil {
-			fmt.Println("Invalid tile.")
-			continue
-		}
-
-		board := state.Boards[current]
+    	fmt.Printf("\nPlayer %d's turn — enter drawn tile or 'p' to pick from table (blank to quit): ", current)
+    	line, _ := reader.ReadString('\n')
+    	line = strings.TrimSpace(line)
+    	if line == "" {
+    	    fmt.Println("Exiting game.")
+    	    return
+    	}
+	
+    	var tile int
+    	if line == "p" {
+    	    if len(state.Table) == 0 {
+    	        fmt.Println("Table is empty, cannot pick.")
+    	        continue
+    	    }
+    	    // show table options
+    	    fmt.Println("Tiles on table:", state.Table)
+    	    fmt.Print("Enter tile to pick: ")
+    	    choice, _ := reader.ReadString('\n')
+    	    choice = strings.TrimSpace(choice)
+    	    t, err := strconv.Atoi(choice)
+    	    if err != nil || !contains(state.Table, t) {
+    	        fmt.Println("Invalid choice.")
+    	        continue
+    	    }
+    	    tile = t
+    	    // remove from table
+    	    for i, v := range state.Table {
+    	        if v == tile {
+    	            state.Table = append(state.Table[:i], state.Table[i+1:]...)
+    	            break
+    	        }
+    	    }
+    	} else {
+    	    t, err := strconv.Atoi(line)
+    	    if err != nil {
+    	        fmt.Println("Invalid tile.")
+    	        continue
+    	    }
+    	    tile = t
+    	}
+	
+    	board := state.Boards[current]
 
 		for {
 			fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
@@ -603,10 +641,10 @@ if setupManual {
 			}
 
 			if action == "r" {
-				recs := bestMoves(board, tile, state, 3)
+				recs := bestMoves(board, tile, state, current)
 				if len(recs) == 0 {
 					fmt.Println("No legal placements found.")
-					break
+					continue // stay in loop
 				}
 				for i, m := range recs {
 					fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
@@ -624,10 +662,11 @@ if setupManual {
 				if err == nil && idx >= 1 && idx <= len(recs) {
 					ApplyMove(board, recs[idx-1], tile)
 					fmt.Println("Move applied.")
+					break
 				} else {
 					fmt.Println("Invalid choice.")
+					continue
 				}
-				break
 			}
 
 			parts := strings.Split(action, ",")
@@ -635,16 +674,24 @@ if setupManual {
 				r, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 				c, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 				if err1 == nil && err2 == nil && r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
-					if board.Grid[r][c] == 0 && isLegalPlacement(board, tile, r, c) {
-						board.Grid[r][c] = tile
-						fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
-					} else {
-						fmt.Println("Illegal placement.")
-					}
-					break
+				    if isLegalPlacement(board, tile, r, c) {
+				        old := board.Grid[r][c]
+				        board.Grid[r][c] = tile
+				        if old != 0 {
+				            state.Table = append(state.Table, old)
+				            fmt.Printf("Swapped %d into table, placed %d at (%d,%d).\n", old, tile, r, c)
+				        } else {
+				            fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
+				        }
+				        break
+				    } else {
+				        fmt.Println("Illegal placement, try again.")
+				    }
 				}
+
 			}
-			fmt.Println("Invalid input.")
+
+			fmt.Println("Invalid input, try again.")
 		}
 
 		PrettyPrintBoardsGridCentered(state)
