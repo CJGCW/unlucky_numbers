@@ -38,7 +38,10 @@ type GameState struct {
 	Boards []*Board
 	Table  []int
 	Draw   []int
+	Analyze bool
 }
+
+var reader = bufio.NewReader(os.Stdin)
 
 // ---------------- Utility ----------------
 
@@ -372,7 +375,7 @@ func ApplyMove(board *Board, move Move, tile int) {
 
 // ---------------- Pretty Printing ----------------
 
-func PrettyPrintBoardsGridCentered(state *GameState) {
+func (state *GameState)PrettyPrintBoardsGridCentered() {
 	cellWidth := 5
 	repeat := func(s string, n int) string {
 		res := ""
@@ -473,172 +476,150 @@ func contains(slice []int, val int) bool {
     return false
 }
 
-func getNumberOfPlayers() int {
-	var numPlayers int
-	reader := bufio.NewReader(os.Stdin)
-	for {
-		fmt.Print("Enter number of players (2–4, default 2): ")
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" {
-			numPlayers = 2
-			break
+
+func (state *GameState) initDrawStack() {
+	used := map[int]bool{}
+	for _, b := range state.Boards {
+		for r := 0; r < BoardSize; r++ {
+			for c := 0; c < BoardSize; c++ {
+				if b.Grid[r][c] != 0 {
+					used[b.Grid[r][c]] = true
+				}
+			}
 		}
-		n, err := strconv.Atoi(line)
-		if err == nil && n >= 2 && n <= 4 {
-			numPlayers = n
-			break
-		}
-		fmt.Println("Invalid input.")
 	}
-	return numPlayers
+	for _, t := range state.Table {
+		used[t] = true
+	}
+
+	for i := 1; i <= 20; i++ {
+		if !used[i] {
+			state.Draw = append(state.Draw, i)
+		}
+	}
+	rand.Shuffle(len(state.Draw), func(i, j int) {
+		state.Draw[i], state.Draw[j] = state.Draw[j], state.Draw[i]
+	})
 }
 
-func (state *GameState)setUpBoards(numPlayers int)  {
-	reader := bufio.NewReader(os.Stdin)
-	// --- Board setup ---
-	fmt.Print("Do you want to set up the boards manually? (y/N): ")
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(strings.ToLower(line))
-	setupManual := line == "y" || line == "yes"
 
-	var setupType string
-	if setupManual {
-		for {
-			fmt.Print("Initial (diagonal numbers) or advanced (enter r,c,t arrays)? (i/a, default i): ")
-			line, _ := reader.ReadString('\n')
-			line = strings.TrimSpace(strings.ToLower(line))
-			if line == "" {
-				setupType = "i"
-				break
-			}
-			if line == "i" || line == "a" {
-				setupType = line
-				break
-			}
-		}
+func fillRandomDiagonal(b *Board) {
+	available := rand.Perm(20)
+	for i := 0; i < BoardSize; i++ {
+		b.Grid[i][i] = available[i] + 1
+	}
+}
+
+func (state *GameState)setUpBoards() {
+	numPlayers := 2
+	
+	fmt.Print("Enter number of players (2–4, default 2): ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line != "" {
+		n, _ := strconv.Atoi(line)
+		numPlayers = n
+	}
+
+	if !state.Analyze {
+		state.initDrawStack()
 	}
 
 	for p := 0; p < numPlayers; p++ {
 		b := &Board{}
-		if setupManual {
-			if setupType == "a" {
-				fmt.Printf("Enter tiles for Player %d as r,c,t; separate multiple with ;\n", p)
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(input)
-				if input != "" {
-					moves := strings.Split(input, ";")
-					for _, m := range moves {
-						parts := strings.Split(strings.TrimSpace(m), ",")
-						if len(parts) == 3 {
-							r, err1 := strconv.Atoi(parts[0])
-							c, err2 := strconv.Atoi(parts[1])
-							t, err3 := strconv.Atoi(parts[2])
-							if err1 == nil && err2 == nil && err3 == nil &&
-								r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
-								b.Grid[r][c] = t
-							}
-						}
-					}
-				}
-			} else { // initial
-				fmt.Printf("Enter 4 numbers for Player %d diagonal positions: ", p)
-				input, _ := reader.ReadString('\n')
-				input = strings.TrimSpace(input)
-				input = strings.ReplaceAll(input, ",", " ")
+
+		if state.Analyze {
+			fmt.Printf("Enter 4 numbers for Player %d diagonal positions (or leave blank for random): ", p)
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(input)
+			if input == "" {
+				fillRandomDiagonal(b)
+			} else {
 				nums := strings.Fields(input)
 				for i := 0; i < BoardSize && i < len(nums); i++ {
 					t, err := strconv.Atoi(nums[i])
 					if err == nil {
 						b.Grid[i][i] = t
-					} else {
-						fmt.Println(err)
 					}
-					
 				}
 			}
 		} else {
-			available := rand.Perm(20)
-			for i := 0; i < BoardSize; i++ {
-				b.Grid[i][i] = available[i] + 1
-			}
+			fillRandomDiagonal(b)
 		}
+
 		state.Boards = append(state.Boards, b)
 	}
 }
 
 func (state *GameState) playGame() {
-		var current int
-		reader := bufio.NewReader(os.Stdin)
-		numPlayers := len(state.Boards)
+	current := 0
+
 	for {
-		fmt.Printf("Who starts (0–%d, default 0): ", numPlayers-1)
-		line, _ := reader.ReadString('\n')
-		line = strings.TrimSpace(line)
-		if line == "" {
-			current = 0
-			break
+		fmt.Printf("\nPlayer %d's turn\n", current)
+		var tile int
+
+		// --- Draw or input phase ---
+		if state.Analyze {
+			fmt.Print(" — enter drawn tile (blank to quit): ")
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(line)
+			if line == "" {
+				fmt.Println("Exiting game.")
+				return
+			}
+			t, err := strconv.Atoi(line)
+			if err != nil {
+				fmt.Println("Invalid tile.")
+				continue
+			}
+			tile = t
+		} else {
+			// PLAY MODE
+			if len(state.Table) > 0 {
+				fmt.Print(" — draw from [p]ile or [t]able? (default pile): ")
+				line, _ := reader.ReadString('\n')
+				line = strings.TrimSpace(strings.ToLower(line))
+				if line == "t" {
+					fmt.Println("Tiles on table:", state.Table)
+					fmt.Print("Enter tile to pick: ")
+					choice, _ := reader.ReadString('\n')
+					choice = strings.TrimSpace(choice)
+					t, err := strconv.Atoi(choice)
+					if err != nil || !contains(state.Table, t) {
+						fmt.Println("Invalid choice.")
+						continue
+					}
+					tile = t
+					for i, v := range state.Table {
+						if v == tile {
+							state.Table = append(state.Table[:i], state.Table[i+1:]...)
+							break
+						}
+					}
+				} else {
+					if len(state.Draw) == 0 {
+						fmt.Println("Draw pile is empty — game over.")
+						return
+					}
+					tile = state.Draw[0]
+					state.Draw = state.Draw[1:]
+					fmt.Printf(" drew a %d\n", tile)
+				}
+			} else {
+				if len(state.Draw) == 0 {
+					fmt.Println("Draw pile is empty — game over.")
+					return
+				}
+				tile = state.Draw[0]
+				state.Draw = state.Draw[1:]
+				fmt.Printf(" drew a %d\n", tile)
+			}
 		}
-		n, err := strconv.Atoi(line)
-		if err == nil && n >= 0 && n < numPlayers {
-			current = n
-			break
-		}
-	}
-	for {
-    	fmt.Printf("\nPlayer %d's turn — enter drawn tile or 'p' to pick from table (blank to quit): ", current)
-    	line, _ := reader.ReadString('\n')
-    	line = strings.TrimSpace(line)
-    	if line == "" {
-    	    fmt.Println("Exiting game.")
-    	    return
-    	}
 
-    	var tile int
-    	if line == "p" {
-    	    if len(state.Table) == 0 {
-    	        fmt.Println("Table is empty, cannot pick.")
-    	        continue
-    	    }
-    	    // show table options
-    	    fmt.Println("Tiles on table:", state.Table)
-    	    fmt.Print("Enter tile to pick: ")
-    	    choice, _ := reader.ReadString('\n')
-    	    choice = strings.TrimSpace(choice)
-    	    t, err := strconv.Atoi(choice)
-    	    if err != nil || !contains(state.Table, t) {
-    	        fmt.Println("Invalid choice.")
-    	        continue
-    	    }
-    	    tile = t
-    	    // remove from table
-    	    for i, v := range state.Table {
-    	        if v == tile {
-    	            state.Table = append(state.Table[:i], state.Table[i+1:]...)
-    	            break
-    	        }
-    	    }
-    	} else {
-    	    t, err := strconv.Atoi(line)
-    	    if err != nil {
-    	        fmt.Println("Invalid tile.")
-    	        continue
-    	    }
-    	    tile = t
-    	}
+		board := state.Boards[current]
 
-		state.playerTurn(current, tile)
-		
-
-		PrettyPrintBoardsGridCentered(state)
-		current = (current + 1) % len(state.Boards)
-	}
-}
-
-func (state *GameState) playerTurn(current int, tile int) {
-		reader := bufio.NewReader(os.Stdin)
-    	board := state.Boards[current]
-	for {
+		// --- Placement phase ---
+		for {
 			fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
 			action, _ := reader.ReadString('\n')
 			action = strings.TrimSpace(action)
@@ -653,7 +634,7 @@ func (state *GameState) playerTurn(current int, tile int) {
 				recs := bestMoves(board, tile, state, current)
 				if len(recs) == 0 {
 					fmt.Println("No legal placements found.")
-					continue // stay in loop
+					continue
 				}
 				for i, m := range recs {
 					fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
@@ -672,10 +653,9 @@ func (state *GameState) playerTurn(current int, tile int) {
 					ApplyMove(board, recs[idx-1], tile)
 					fmt.Println("Move applied.")
 					break
-				} else {
-					fmt.Println("Invalid choice.")
-					continue
 				}
+				fmt.Println("Invalid choice.")
+				continue
 			}
 
 			parts := strings.Split(action, ",")
@@ -683,44 +663,50 @@ func (state *GameState) playerTurn(current int, tile int) {
 				r, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 				c, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 				if err1 == nil && err2 == nil && r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
-				    if isLegalPlacement(board, tile, r, c) {
-				        old := board.Grid[r][c]
-				        board.Grid[r][c] = tile
-				        if old != 0 {
-				            state.Table = append(state.Table, old)
-				            fmt.Printf("Swapped %d into table, placed %d at (%d,%d).\n", old, tile, r, c)
-				        } else {
-				            fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
-				        }
-				        break
-				    } else {
-				        fmt.Println("Illegal placement, try again.")
-				    }
+					if isLegalPlacement(board, tile, r, c) {
+						old := board.Grid[r][c]
+						board.Grid[r][c] = tile
+						if old != 0 {
+							state.Table = append(state.Table, old)
+							fmt.Printf("Swapped %d into table, placed %d at (%d,%d).\n", old, tile, r, c)
+						} else {
+							fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
+						}
+						break
+					} else {
+						fmt.Println("Illegal placement, try again.")
+						continue
+					}
 				}
-
 			}
 
 			fmt.Println("Invalid input, try again.")
 		}
+
+		state.PrettyPrintBoardsGridCentered()
+		current = (current + 1) % len(state.Boards)
+	}
 }
+
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	var numPlayers = getNumberOfPlayers()
-	
-	
+	fmt.Print("Do you want to (P)lay or (A)nalyze? (default: P): ")
+	line, _ := reader.ReadString('\n')
+	mode := strings.TrimSpace(strings.ToLower(line))
+
 	state := &GameState{Boards: []*Board{}}
+	if mode == "a" || mode == "analyze" {
+		state.Analyze = true
+		fmt.Println("Analyze mode selected — manual board setup enabled.")
+	} else {
+		state.Analyze = false
+		fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
+	}
 
-	state.setUpBoards(numPlayers)
-
-	PrettyPrintBoardsGridCentered(state)
-
-	// --- Starting player ---
-	
+	state.setUpBoards()
+	state.PrettyPrintBoardsGridCentered()
 	state.playGame()
-	
-
-	// --- Main game loop ---
 	
 }
