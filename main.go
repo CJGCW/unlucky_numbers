@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/csv"
 	"fmt"
+	"math"
 	"math/rand"
 	"os"
 	"sort"
@@ -221,85 +222,76 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 
 // ---------------- AI Evaluation ----------------
 
-// bestMoves returns the top N moves (placements or swaps) for a drawn tile
 func bestMoves(board *Board, tile int, state *GameState) []Move {
-	type scoredMove struct {
-		move  Move
-		score float64
-	}
-	moves := []scoredMove{}
-	remaining := getRemainingTileCounts(state, board)
+	var moves []Move
 
-	// --- Placements ---
+	minTile, maxTile := 1, 20 // adjust to your deck
+	BoardSize := len(board.Grid)
+
+	// --- Evaluate every cell ---
 	for r := 0; r < BoardSize; r++ {
 		for c := 0; c < BoardSize; c++ {
-			if board.Grid[r][c] != 0 {
-				continue
+			old := board.Grid[r][c]
+
+			moveType := Place
+			if old != 0 {
+				moveType = Swap
 			}
+
 			if !isLegalPlacement(board, tile, r, c) {
 				continue
 			}
-			if !isPlacementFeasible(board, r, c, tile, remaining) {
-				continue
-			}
-			// count options for scoring
-			count := 0
-			for t := 1; t <= 20; t++ {
-				if remaining[t] > 0 && isLegalPlacement(board, t, r, c) && isPlacementFeasible(board, r, c, t, remaining) {
-					count++
-				}
-			}
-			if count == 0 {
-				continue
-			}
-			score := 1.0 / float64(count)
-			moves = append(moves, scoredMove{move: Move{Type: Place, Cell: &Cell{R: r, C: c}, Score: score}, score: score})
-		}
-	}
 
-	// --- Swaps ---
-	for r := 0; r < BoardSize; r++ {
-		for c := 0; c < BoardSize; c++ {
-			current := board.Grid[r][c]
-			if current == 0 || current == tile {
-				continue
-			}
-			// Swap only if new tile would fit here legally and be feasible
-			tmp := *board
-			tmp.Grid[r][c] = tile
-			if !isLegalPlacement(&tmp, tile, r, c) {
-				continue
-			}
-			if !isPlacementFeasible(&tmp, r, c, tile, remaining) {
-				continue
-			}
-			// Also ensure the removed tile can still go elsewhere?
-			// Optional: could check, but for now just scoring the swap placement
-			count := 0
-			for t := 1; t <= 20; t++ {
-				if remaining[t] > 0 && isLegalPlacement(&tmp, t, r, c) && isPlacementFeasible(&tmp, r, c, t, remaining) {
-					count++
-				}
-			}
-			if count == 0 {
-				continue
-			}
-			score := 1.0 / float64(count)
-			moves = append(moves, scoredMove{move: Move{Type: Swap, Cell: &Cell{R: r, C: c}, OldTile: current, Score: score}, score: score})
+			score := positionalScore(tile, r, c, minTile, maxTile, BoardSize, board)
+			moves = append(moves, Move{
+				Type:  moveType,
+				Cell:  &Cell{R: r, C: c},
+				Score: score,
+			})
 		}
 	}
 
 	// --- Sort moves by score descending ---
 	sort.Slice(moves, func(i, j int) bool {
-		return moves[i].score > moves[j].score
+		return moves[i].Score > moves[j].Score
 	})
 
-	// --- Return top N ---
-	result := []Move{}
-	for i := 0; i < len(moves) && i < 3; i++ {
-		result = append(result, moves[i].move)
+	return moves
+}
+
+func positionalScore(tile, r, c int, minTile, maxTile, BoardSize int, board *Board) float64 {
+	// Normalize tile value
+	norm := float64(tile-minTile) / float64(maxTile-minTile)
+
+	// Normalize board position
+	posWeight := (float64(r) + float64(c)) / float64((BoardSize-1)*2)
+
+	// Alignment score (how well tile fits the position)
+	alignment := 1.0 - math.Abs(norm-posWeight)
+
+	// Feasibility: reward cells that leave row/col flexible
+	feasibility := estimateFutureFlexibility(board, r, c, tile)
+
+	return alignment * feasibility
+}
+
+// estimateFutureFlexibility returns a value 0..1 based on how many legal options
+// remain in the row and column after placing tile.
+func estimateFutureFlexibility(board *Board, r, c, tile int) float64 {
+	BoardSize := len(board.Grid)
+	count := 0
+
+	// Check row and column constraints
+	for i := 0; i < BoardSize; i++ {
+		if i != c && board.Grid[r][i] == 0 {
+			count++
+		}
+		if i != r && board.Grid[i][c] == 0 {
+			count++
+		}
 	}
-	return result
+
+	return 0.5 + 0.5*float64(count)/float64((BoardSize-1)*2) // normalize to 0.5..1
 }
 
 // getRemainingTileCounts excludes opponent tiles from availability
