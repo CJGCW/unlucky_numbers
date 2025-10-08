@@ -36,11 +36,12 @@ type Board struct {
 }
 
 type GameState struct {
-	Boards  []*Board
-	Table   []int
-	Draw    []int
-	Analyze bool
-	Current int //track player turns for save/load actions
+	Boards       []*Board
+	Table        []int
+	Draw         []int
+	Analyze      bool // analysis mode aka we tell it what numbers we draw.
+	BrunoVariant bool
+	Current      int //track player turns for save/load actions
 }
 
 var reader = bufio.NewReader(os.Stdin)
@@ -219,43 +220,8 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 
 // ---------------- AI Evaluation ----------------
 
-// bestPlacement finds the best empty cell for tile, considering remaining tiles
-func bestPlacement(board *Board, tile int, state *GameState) *Cell {
-	var best *Cell
-	bestScore := -1.0
-	remaining := remainingTiles(state)
-
-	for r := 0; r < BoardSize; r++ {
-		for c := 0; c < BoardSize; c++ {
-			if board.Grid[r][c] != 0 {
-				continue
-			}
-			lo, hi := legalRange(board, r, c)
-			if tile < lo || tile > hi {
-				continue
-			}
-			// Count how many remaining tiles can fit in this cell
-			count := 0
-			for t := lo; t <= hi; t++ {
-				if remaining[t] {
-					count++
-				}
-			}
-			if count == 0 {
-				continue
-			} // cannot fill in future
-			score := 1.0 / float64(count) // fewer options = higher priority
-			if score > bestScore {
-				bestScore = score
-				best = &Cell{r, c}
-			}
-		}
-	}
-	return best
-}
-
 // bestMoves returns the top N moves (placements or swaps) for a drawn tile
-func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
+func bestMoves(board *Board, tile int, state *GameState) []Move {
 	type scoredMove struct {
 		move  Move
 		score float64
@@ -329,7 +295,7 @@ func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
 
 	// --- Return top N ---
 	result := []Move{}
-	for i := 0; i < len(moves) && i < N; i++ {
+	for i := 0; i < len(moves) && i < 3; i++ {
 		result = append(result, moves[i].move)
 	}
 	return result
@@ -372,27 +338,23 @@ func getRemainingTileCounts(state *GameState, myBoard *Board) map[int]int {
 	return counts
 }
 
-// FindBestMove returns the AI's best move
-func FindBestMove(board *Board, tile int, state *GameState) Move {
-	cell := bestPlacement(board, tile, state)
-	if cell != nil {
-		return Move{Type: Place, Cell: cell}
-	}
-	return Move{Type: Discard}
-}
-
-// ---------------- Game Utilities ----------------
-
-func ApplyMove(board *Board, move Move, tile int) {
-	if move.Type == Place || move.Type == Swap {
+func (state *GameState) applyMove(current int, move Move, tile int) bool {
+	board := state.Boards[current]
+	switch move.Type {
+	case Place:
 		board.Grid[move.Cell.R][move.Cell.C] = tile
+	case Swap:
+		old := board.Grid[move.Cell.R][move.Cell.C]
+		board.Grid[move.Cell.R][move.Cell.C] = tile
+		state.Table = append(state.Table, old)
+	case Discard:
+		state.Table = append(state.Table, tile)
+		fmt.Println("Discarded to table.")
+		return false
 	}
-	if move.Type == Discard {
-		// in full game, add to table
-	}
-}
 
-// ---------------- Pretty Printing ----------------
+	return state.BrunoVariant && checkBrunoExtra(board, move.Cell.R, move.Cell.C)
+}
 
 func (state *GameState) PrettyPrintBoardsGridCentered() {
 	cellWidth := 5
@@ -568,6 +530,13 @@ func (state *GameState) setUpBoards() {
 	}
 }
 
+func promptBrunoVariant() bool {
+	fmt.Print("Enable Bruno variant? (extra turn for adjacent diagonal match) (y/N): ")
+	line, _ := reader.ReadString('\n')
+	line = strings.TrimSpace(strings.ToLower(line))
+	return line == "y" || line == "yes"
+}
+
 func (state *GameState) playGame() {
 
 	for {
@@ -575,21 +544,37 @@ func (state *GameState) playGame() {
 
 		// --- Turn start prompt: draw / save / quit ---
 		tile, quit := state.promptDrawOrSave()
-		if quit {
+		if quit || tile == -1 {
 			fmt.Println("Exiting game.")
 			return
 		}
-		if tile == -1 {
-			// user saved — skip rest of turn
-			continue
-		}
-
-		// --- Placement phase ---
 		state.promptPlacement(state.Current, tile)
 
 		state.PrettyPrintBoardsGridCentered()
 		state.Current = (state.Current + 1) % len(state.Boards)
 	}
+}
+
+func checkBrunoExtra(board *Board, r, c int) bool {
+	tile := board.Grid[r][c]
+	if tile == 0 {
+		return false
+	}
+
+	deltas := [][2]int{
+		{-1, -1}, {-1, 1}, {1, -1}, {1, 1},
+	}
+
+	for _, d := range deltas {
+		nr, nc := r+d[0], c+d[1]
+		if nr >= 0 && nr < BoardSize && nc >= 0 && nc < BoardSize {
+			if board.Grid[nr][nc] == tile {
+				fmt.Printf("Bruno’s Variant: matching diagonal at (%d,%d)! Extra turn granted.\n", nr, nc)
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (state *GameState) promptPlacement(current, tile int) {
@@ -602,34 +587,43 @@ func (state *GameState) promptPlacement(current, tile int) {
 
 		switch action {
 		case "t":
-			state.Table = append(state.Table, tile)
+			move := Move{Type: Discard}
+			state.applyMove(current, move, tile)
 			fmt.Println("Placed on table.")
 			return
+
 		case "r":
-			recs := bestMoves(board, tile, state, current)
+			recs := bestMoves(board, tile, state)
 			if len(recs) == 0 {
 				fmt.Println("No legal placements found.")
 				continue
 			}
+
 			for i, m := range recs {
 				fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
 					i+1,
 					map[MoveType]string{Place: "Place", Swap: "Swap"}[m.Type],
 					m.Cell.R, m.Cell.C, m.Score)
 			}
+
 			fmt.Print("Choose move number or press Enter to skip: ")
 			choice, _ := reader.ReadString('\n')
 			choice = strings.TrimSpace(choice)
 			if choice == "" {
 				continue
 			}
+
 			idx, err := strconv.Atoi(choice)
 			if err == nil && idx >= 1 && idx <= len(recs) {
-				ApplyMove(board, recs[idx-1], tile)
-				fmt.Println("Move applied.")
+				extra := state.applyMove(current, recs[idx-1], tile)
+				if extra {
+					continue // Bruno extra turn
+				}
 				return
 			}
+
 			fmt.Println("Invalid choice.")
+
 		default:
 			parts := strings.Split(action, ",")
 			if len(parts) == 2 {
@@ -637,13 +631,21 @@ func (state *GameState) promptPlacement(current, tile int) {
 				c, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 				if err1 == nil && err2 == nil && r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
 					if isLegalPlacement(board, tile, r, c) {
+						move := Move{
+							Type: Place,
+							Cell: &Cell{R: r, C: c},
+						}
 						old := board.Grid[r][c]
-						board.Grid[r][c] = tile
+						extra := state.applyMove(current, move, tile)
+
 						if old != 0 {
 							state.Table = append(state.Table, old)
 							fmt.Printf("Swapped %d into table, placed %d at (%d,%d).\n", old, tile, r, c)
 						} else {
 							fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
+						}
+						if extra {
+							continue // don’t advance turn
 						}
 						return
 					}
@@ -806,7 +808,6 @@ func (state *GameState) loadFromCSV(filename string) error {
 		return err
 	}
 	state.Current = cur
-	fmt.Printf("%d's turn loaded", state.Current)
 	// --- Parse table ---
 	if records[1][0] != "TABLE" {
 		return fmt.Errorf("expected TABLE record")
@@ -895,6 +896,7 @@ func main() {
 
 		state.setUpBoards()
 	}
+	state.BrunoVariant = promptBrunoVariant()
 	state.PrettyPrintBoardsGridCentered()
 	state.playGame()
 

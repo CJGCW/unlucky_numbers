@@ -72,13 +72,12 @@ func TestGetRemainingTileCounts(t *testing.T) {
 	}
 }
 
-
 func TestBestMoves(t *testing.T) {
 	state := exampleStateForTests()
 	board := state.Boards[1]
 	drawTile := 18
 
-	moves := bestMoves(board, drawTile, state, 3)
+	moves := bestMoves(board, drawTile, state)
 	if len(moves) == 0 {
 		t.Errorf("Expected at least one move for %d", drawTile)
 	}
@@ -131,7 +130,7 @@ func TestSwapLegality(t *testing.T) {
 	state := exampleStateForTests()
 	board := state.Boards[1]
 
-	moves := bestMoves(board, 18, state, 5)
+	moves := bestMoves(board, 18, state)
 	swapFound := false
 	for _, m := range moves {
 		if m.Type == Swap {
