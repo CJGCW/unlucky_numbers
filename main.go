@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/csv"
 	"fmt"
 	"math/rand"
 	"os"
@@ -39,6 +40,7 @@ type GameState struct {
 	Table  []int
 	Draw   []int
 	Analyze bool
+	Current int //track player turns for save/load actions
 }
 
 var reader = bufio.NewReader(os.Stdin)
@@ -552,112 +554,69 @@ func (state *GameState)setUpBoards() {
 }
 
 func (state *GameState) playGame() {
-	current := 0
+	
 
 	for {
-		fmt.Printf("\nPlayer %d's turn\n", current)
-		var tile int
+		fmt.Printf("\nPlayer %d's turn\n", state.Current)
 
-		// --- Draw or input phase ---
-		if state.Analyze {
-			fmt.Print(" — enter drawn tile (blank to quit): ")
-			line, _ := reader.ReadString('\n')
-			line = strings.TrimSpace(line)
-			if line == "" {
-				fmt.Println("Exiting game.")
-				return
-			}
-			t, err := strconv.Atoi(line)
-			if err != nil {
-				fmt.Println("Invalid tile.")
-				continue
-			}
-			tile = t
-		} else {
-			// PLAY MODE
-			if len(state.Table) > 0 {
-				fmt.Print(" — draw from [p]ile or [t]able? (default pile): ")
-				line, _ := reader.ReadString('\n')
-				line = strings.TrimSpace(strings.ToLower(line))
-				if line == "t" {
-					fmt.Println("Tiles on table:", state.Table)
-					fmt.Print("Enter tile to pick: ")
-					choice, _ := reader.ReadString('\n')
-					choice = strings.TrimSpace(choice)
-					t, err := strconv.Atoi(choice)
-					if err != nil || !contains(state.Table, t) {
-						fmt.Println("Invalid choice.")
-						continue
-					}
-					tile = t
-					for i, v := range state.Table {
-						if v == tile {
-							state.Table = append(state.Table[:i], state.Table[i+1:]...)
-							break
-						}
-					}
-				} else {
-					if len(state.Draw) == 0 {
-						fmt.Println("Draw pile is empty — game over.")
-						return
-					}
-					tile = state.Draw[0]
-					state.Draw = state.Draw[1:]
-					fmt.Printf(" drew a %d\n", tile)
-				}
-			} else {
-				if len(state.Draw) == 0 {
-					fmt.Println("Draw pile is empty — game over.")
-					return
-				}
-				tile = state.Draw[0]
-				state.Draw = state.Draw[1:]
-				fmt.Printf(" drew a %d\n", tile)
-			}
+		// --- Turn start prompt: draw / save / quit ---
+		tile, quit := state.promptDrawOrSave()
+		if quit {
+			fmt.Println("Exiting game.")
+			return
+		}
+		if tile == -1 {
+			// user saved — skip rest of turn
+			continue
 		}
 
-		board := state.Boards[current]
-
 		// --- Placement phase ---
-		for {
-			fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
-			action, _ := reader.ReadString('\n')
-			action = strings.TrimSpace(action)
+		state.promptPlacement(state.Current, tile)
 
-			if action == "t" {
-				state.Table = append(state.Table, tile)
-				fmt.Println("Placed on table.")
-				break
-			}
+		state.PrettyPrintBoardsGridCentered()
+		state.Current = (state.Current + 1) % len(state.Boards)
+	}
+}
 
-			if action == "r" {
-				recs := bestMoves(board, tile, state, current)
-				if len(recs) == 0 {
-					fmt.Println("No legal placements found.")
-					continue
-				}
-				for i, m := range recs {
-					fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
-						i+1,
-						map[MoveType]string{Place: "Place", Swap: "Swap"}[m.Type],
-						m.Cell.R, m.Cell.C, m.Score)
-				}
-				fmt.Print("Choose a move number or press Enter to skip: ")
-				choice, _ := reader.ReadString('\n')
-				choice = strings.TrimSpace(choice)
-				if choice == "" {
-					continue
-				}
-				idx, err := strconv.Atoi(choice)
-				if err == nil && idx >= 1 && idx <= len(recs) {
-					ApplyMove(board, recs[idx-1], tile)
-					fmt.Println("Move applied.")
-					break
-				}
-				fmt.Println("Invalid choice.")
+func (state *GameState) promptPlacement(current, tile int) {
+	board := state.Boards[current]
+
+	for {
+		fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
+		action, _ := reader.ReadString('\n')
+		action = strings.TrimSpace(action)
+
+		switch action {
+		case "t":
+			state.Table = append(state.Table, tile)
+			fmt.Println("Placed on table.")
+			return
+		case "r":
+			recs := bestMoves(board, tile, state, current)
+			if len(recs) == 0 {
+				fmt.Println("No legal placements found.")
 				continue
 			}
-
+			for i, m := range recs {
+				fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
+					i+1,
+					map[MoveType]string{Place: "Place", Swap: "Swap"}[m.Type],
+					m.Cell.R, m.Cell.C, m.Score)
+			}
+			fmt.Print("Choose move number or press Enter to skip: ")
+			choice, _ := reader.ReadString('\n')
+			choice = strings.TrimSpace(choice)
+			if choice == "" {
+				continue
+			}
+			idx, err := strconv.Atoi(choice)
+			if err == nil && idx >= 1 && idx <= len(recs) {
+				ApplyMove(board, recs[idx-1], tile)
+				fmt.Println("Move applied.")
+				return
+			}
+			fmt.Println("Invalid choice.")
+		default:
 			parts := strings.Split(action, ",")
 			if len(parts) == 2 {
 				r, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
@@ -672,32 +631,251 @@ func (state *GameState) playGame() {
 						} else {
 							fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
 						}
-						break
-					} else {
-						fmt.Println("Illegal placement, try again.")
-						continue
+						return
 					}
 				}
 			}
-
 			fmt.Println("Invalid input, try again.")
 		}
-
-		state.PrettyPrintBoardsGridCentered()
-		current = (current + 1) % len(state.Boards)
 	}
 }
+
+func (state *GameState) promptDrawOrSave() (int, bool) {
+	for {
+		fmt.Print("[d]raw, [s]ave, or [q]uit? ")
+		line, _ := reader.ReadString('\n')
+		line = strings.TrimSpace(strings.ToLower(line))
+
+		switch line {
+		case "q":
+			return 0, true
+		case "s":
+			fmt.Println("enter file name for save")
+			line, _ := reader.ReadString('\n')
+			filename := strings.TrimSpace(strings.ToLower(line))
+			if !strings.HasSuffix(filename, ".csv") {
+    			filename += ".csv"
+			}
+			if err := state.saveToCSV(filename); err != nil {
+				fmt.Println("Failed to save:", err)
+			} else {
+				fmt.Println("Game saved.")
+			}
+			return -1, false
+		case "d", "":
+			if state.Analyze {
+				fmt.Print("Enter drawn tile: ")
+				text, _ := reader.ReadString('\n')
+				text = strings.TrimSpace(text)
+				if text == "" {
+					return 0, true
+				}
+				tile, err := strconv.Atoi(text)
+				if err != nil {
+					fmt.Println("Invalid tile number.")
+					continue
+				}
+				return tile, false
+			}
+			return state.drawTile(), false
+		default:
+			fmt.Println("Invalid option.")
+		}
+	}
+}
+
+func (state *GameState) drawTile() int {
+	if len(state.Table) > 0 {
+		fmt.Print("Draw from [p]ile or [t]able? (default pile): ")
+		choice, _ := reader.ReadString('\n')
+		choice = strings.TrimSpace(strings.ToLower(choice))
+		if choice == "t" {
+			fmt.Println("Tiles on table:", state.Table)
+			fmt.Print("Enter tile to pick: ")
+			input, _ := reader.ReadString('\n')
+			input = strings.TrimSpace(input)
+			tile, err := strconv.Atoi(input)
+			if err != nil || !contains(state.Table, tile) {
+				fmt.Println("Invalid choice.")
+				return state.drawTile()
+			}
+			for i, v := range state.Table {
+				if v == tile {
+					state.Table = append(state.Table[:i], state.Table[i+1:]...)
+					break
+				}
+			}
+			return tile
+		}
+	}
+	if len(state.Draw) == 0 {
+		fmt.Println("Draw pile is empty — game over.")
+		os.Exit(0)
+	}
+	tile := state.Draw[0]
+	state.Draw = state.Draw[1:]
+	fmt.Printf(" drew a %d\n", tile)
+	return tile
+}
+
+
+func (state *GameState) saveToCSV(filename string) error {
+    f, err := os.Create(filename)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+
+    writer := csv.NewWriter(f)
+    defer writer.Flush()
+
+    // Write turn info
+    writer.Write([]string{"TURN", strconv.Itoa(state.Current)})
+
+    // Write table
+    tableRow := []string{"TABLE"}
+    for _, t := range state.Table {
+        tableRow = append(tableRow, strconv.Itoa(t))
+    }
+    writer.Write(tableRow)
+
+    // Write boards
+    for _, board := range state.Boards {
+        for r := 0; r < BoardSize; r++ {
+            row := make([]string, BoardSize)
+            for c := 0; c < BoardSize; c++ {
+                if board.Grid[r][c] == 0 {
+                    row[c] = "."
+                } else {
+                    row[c] = strconv.Itoa(board.Grid[r][c])
+                }
+            }
+            writer.Write(row)
+        }
+    }
+
+    return nil
+}
+
+func (state *GameState) loadFromCSV(filename string) error {
+    f, err := os.Open(filename)
+    if err != nil {
+        return err
+    }
+    defer f.Close()
+
+    reader := csv.NewReader(f)
+	reader.FieldsPerRecord = -1 
+    records, err := reader.ReadAll()
+    if err != nil {
+        return err
+    }
+
+    if len(records) < 2 {
+        return fmt.Errorf("CSV too short")
+    }
+
+    state.Boards = []*Board{}
+    state.Table = []int{}
+    state.Current = 0
+
+    usedTiles := map[int]bool{}
+
+    // --- Parse turn ---
+    if records[0][0] != "TURN" {
+        return fmt.Errorf("expected TURN record")
+    }
+    if len(records[0]) < 2 {
+        return fmt.Errorf("TURN record missing player index")
+    }
+    cur, err := strconv.Atoi(records[0][1])
+    if err != nil {
+        return err
+    }
+    state.Current = cur
+	fmt.Printf("%d's turn loaded", state.Current)
+    // --- Parse table ---
+    if records[1][0] != "TABLE" {
+        return fmt.Errorf("expected TABLE record")
+    }
+    for _, t := range records[1][1:] {
+        if t == "." {
+            continue
+        }
+        n, err := strconv.Atoi(t)
+        if err != nil {
+            return err
+        }
+        state.Table = append(state.Table, n)
+        usedTiles[n] = true
+    }
+
+    // --- Parse boards ---
+    var currentBoard *Board
+    rowCounter := 0
+    for _, rec := range records[2:] {
+        if len(rec) != BoardSize {
+            return fmt.Errorf("board row with wrong number of fields")
+        }
+        if rowCounter == 0 {
+            currentBoard = &Board{}
+        }
+        for c, val := range rec {
+            if val == "." {
+                currentBoard.Grid[rowCounter][c] = 0
+            } else {
+                n, err := strconv.Atoi(val)
+                if err != nil {
+                    return err
+                }
+                currentBoard.Grid[rowCounter][c] = n
+                usedTiles[n] = true
+            }
+        }
+        rowCounter++
+        if rowCounter == BoardSize {
+            state.Boards = append(state.Boards, currentBoard)
+            rowCounter = 0
+        }
+    }
+
+    // --- Generate draw pile ---
+    tileCounts := 20 * 1 // adjust if using duplicates or more players
+    remaining := []int{}
+    for i := 1; i <= tileCounts; i++ {
+        if !usedTiles[i] {
+            remaining = append(remaining, i)
+        }
+    }
+    rand.Shuffle(len(remaining), func(i, j int) { remaining[i], remaining[j] = remaining[j], remaining[i] })
+    state.Draw = remaining
+
+    return nil
+}
+
 
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	fmt.Print("Do you want to (P)lay or (A)nalyze? (default: P): ")
-	line, _ := reader.ReadString('\n')
-	mode := strings.TrimSpace(strings.ToLower(line))
+	
+	fmt.Print("Load from CSV file? (filename or blank for new game): ")
+csvFile, _ := reader.ReadString('\n')
+csvFile = strings.TrimSpace(csvFile)
 
-	state := &GameState{Boards: []*Board{}}
-	if mode == "a" || mode == "analyze" {
+state := &GameState{}
+
+if csvFile != "" {
+    if err := state.loadFromCSV(csvFile); err != nil {
+        fmt.Println("Failed to load:", err)
+        return
+    }
+    fmt.Println("Loaded game from", csvFile)
+} else {
+    fmt.Print("Play or Analyze? (p/a): ")
+    mode, _ := reader.ReadString('\n')
+    mode = strings.TrimSpace(strings.ToLower(mode))
+    if mode == "a" || mode == "analyze" {
 		state.Analyze = true
 		fmt.Println("Analyze mode selected — manual board setup enabled.")
 	} else {
@@ -705,7 +883,8 @@ func main() {
 		fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
 	}
 
-	state.setUpBoards()
+    state.setUpBoards()
+}
 	state.PrettyPrintBoardsGridCentered()
 	state.playGame()
 	
