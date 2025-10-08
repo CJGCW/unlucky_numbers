@@ -23,8 +23,8 @@ func exampleStateForTests() *GameState {
 	}
 	return &GameState{
 		Boards: []*Board{board1, board2},
-		Table:  []int{7, 5, 17, 4, 10},
-		Draw:   []int{},
+		Table:  []int{7, 5, 17, 4},
+		Draw:   []int{1, 1, 2, 2, 3, 3, 4, 6, 8, 8, 9, 11, 11, 12, 12, 13, 13, 14, 17},
 	}
 }
 

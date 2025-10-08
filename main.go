@@ -188,8 +188,8 @@ func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
 			break
 		}
 		hasFuture := false
-		for t := minNeeded; t < len(remaining); t++ {
-			if remaining[t] > 0 {
+		for t := 0; t < len(remaining); t++ {
+			if remaining[t] >= minNeeded {
 				hasFuture = true
 				break
 			}
