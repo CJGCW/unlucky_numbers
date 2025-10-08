@@ -50,11 +50,10 @@ func TestIsLegalPlacement(t *testing.T) {
 func TestIsPlacementFeasible(t *testing.T) {
 	state := exampleStateForTests()
 	b := state.Boards[1]
-	remaining := getRemainingTileCounts(state, b)
-	if !isPlacementFeasible(b, 0, 1, 7, remaining) {
+	if !state.isPlacementFeasible(b, 0, 1, 7) {
 		t.Errorf("Expected 7 at (0,1) to be feasible")
 	}
-	if isPlacementFeasible(b, 0, 3, 18, remaining) {
+	if state.isPlacementFeasible(b, 0, 3, 18) {
 		t.Errorf("Expected 18 at (0,3) to be infeasible due to missing 19s")
 	}
 }
@@ -77,7 +76,7 @@ func TestBestMoves(t *testing.T) {
 	board := state.Boards[1]
 	drawTile := 18
 
-	moves := bestMoves(board, drawTile, state)
+	moves := state.bestMoves(board, drawTile)
 	if len(moves) == 0 {
 		t.Errorf("Expected at least one move for %d", drawTile)
 	}
@@ -98,7 +97,7 @@ func TestBestMoves(t *testing.T) {
 		switch m.Type {
 		case Place:
 			// Ensure the suggested placement is feasible given remaining tiles
-			if !isPlacementFeasible(board, m.Cell.R, m.Cell.C, drawTile, baseRemaining) {
+			if !state.isPlacementFeasible(board, m.Cell.R, m.Cell.C, drawTile) {
 				t.Errorf("Suggested infeasible placement at (%d,%d) for tile %d", m.Cell.R, m.Cell.C, drawTile)
 			}
 		case Swap:
@@ -119,7 +118,7 @@ func TestBestMoves(t *testing.T) {
 			}
 
 			// Now check feasibility on the swapped board
-			if !isPlacementFeasible(&tmp, m.Cell.R, m.Cell.C, drawTile, cc) {
+			if !state.isPlacementFeasible(&tmp, m.Cell.R, m.Cell.C, drawTile) {
 				t.Errorf("Suggested infeasible swap at (%d,%d): swap %d -> %d", m.Cell.R, m.Cell.C, old, drawTile)
 			}
 		}
@@ -130,7 +129,7 @@ func TestSwapLegality(t *testing.T) {
 	state := exampleStateForTests()
 	board := state.Boards[1]
 
-	moves := bestMoves(board, 18, state)
+	moves := state.bestMoves(board, 18)
 	swapFound := false
 	for _, m := range moves {
 		if m.Type == Swap {

@@ -50,21 +50,6 @@ var reader = bufio.NewReader(os.Stdin)
 
 // ---------------- Utility ----------------
 
-func max(a, b int) int {
-	if a > b {
-		return a
-	} else {
-		return b
-	}
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	} else {
-		return b
-	}
-}
-
 // remainingTiles returns a set of tiles that are not on any board or on the table
 func remainingTiles(state *GameState) map[int]bool {
 	used := map[int]bool{}
@@ -134,25 +119,23 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 	return true
 }
 
-// legalRange returns min/max value that can go at (r,c)
-func legalRange(board *Board, r, c int) (lo, hi int) {
-	lo, hi = 1, 20
-	if r > 0 && board.Grid[r-1][c] != 0 {
-		lo = max(lo, board.Grid[r-1][c]+1)
-	}
-	if r < BoardSize-1 && board.Grid[r+1][c] != 0 {
-		hi = min(hi, board.Grid[r+1][c]-1)
-	}
-	if c > 0 && board.Grid[r][c-1] != 0 {
-		lo = max(lo, board.Grid[r][c-1]+1)
-	}
-	if c < BoardSize-1 && board.Grid[r][c+1] != 0 {
-		hi = min(hi, board.Grid[r][c+1]-1)
-	}
-	return
-}
+// ---------------- AI Evaluation ----------------
+func placementScore(tile int, r, c int) float64 {
+	// Normalize tile to 0..1 range (1..20)
+	norm := float64(tile-1) / float64(BoardSize*BoardSize-1) // 0..1
 
-func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bool {
+	// Desired row/col for this tile
+	desired := norm * float64(BoardSize-1) // 0..3
+
+	// Penalize distance from desired row and col
+	rowDiff := float64(r) - desired
+	colDiff := float64(c) - desired
+
+	score := -(rowDiff*rowDiff + colDiff*colDiff) // negative distance squared
+	return score
+}
+func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
+	remaining := append(state.Draw, state.Table...)
 	// Check above
 	for rr := r - 1; rr >= 0; rr-- {
 		v := board.Grid[rr][c]
@@ -182,7 +165,7 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 		// don't instantly fail just because remaining[minNeeded] == 0,
 		// instead, look ahead for *any* available larger tile
 		hasFuture := false
-		for t := minNeeded; t <= 20; t++ {
+		for t := minNeeded; t < len(remaining); t++ {
 			if remaining[t] > 0 {
 				hasFuture = true
 				break
@@ -205,7 +188,7 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 			break
 		}
 		hasFuture := false
-		for t := minNeeded; t <= 20; t++ {
+		for t := minNeeded; t < len(remaining); t++ {
 			if remaining[t] > 0 {
 				hasFuture = true
 				break
@@ -220,38 +203,39 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 	return true
 }
 
-// ---------------- AI Evaluation ----------------
-
-func bestMoves(board *Board, tile int, state *GameState) []Move {
+func (state *GameState) bestMoves(board *Board, tile int) []Move {
 	var moves []Move
 
-	minTile, maxTile := 1, 20 // adjust to your deck
-	BoardSize := len(board.Grid)
+	// Precompute remaining tiles for feasibility checks
+	remaining := make(map[int]bool)
+	for _, t := range state.Draw {
+		remaining[t] = true
+	}
+	for _, t := range state.Table {
+		remaining[t] = true
+	}
 
-	// --- Evaluate every cell ---
 	for r := 0; r < BoardSize; r++ {
 		for c := 0; c < BoardSize; c++ {
-			old := board.Grid[r][c]
-
-			moveType := Place
-			if old != 0 {
-				moveType = Swap
+			if board.Grid[r][c] == 0 {
+				move := Move{Type: Place, Cell: &Cell{R: r, C: c}}
+				if state.isPlacementFeasible(board, r, c, tile) {
+					move.Score = placementScore(r, c, tile) // your scoring function
+					moves = append(moves, move)
+				}
+			} else {
+				// Consider swap if swapping is legal
+				old := board.Grid[r][c]
+				move := Move{Type: Swap, Cell: &Cell{R: r, C: c}}
+				if tile > old && state.isPlacementFeasible(board, r, c, tile) {
+					move.Score = placementScore(r, c, tile) // score swap same as placement
+					moves = append(moves, move)
+				}
 			}
-
-			if !isLegalPlacement(board, tile, r, c) {
-				continue
-			}
-
-			score := positionalScore(tile, r, c, minTile, maxTile, BoardSize, board)
-			moves = append(moves, Move{
-				Type:  moveType,
-				Cell:  &Cell{R: r, C: c},
-				Score: score,
-			})
 		}
 	}
 
-	// --- Sort moves by score descending ---
+	// Sort descending by score
 	sort.Slice(moves, func(i, j int) bool {
 		return moves[i].Score > moves[j].Score
 	})
@@ -624,7 +608,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 
 	// --- AI-controlled board auto-play ---
 	if board.IsAi {
-		recs := bestMoves(board, tile, state)
+		recs := state.bestMoves(board, tile)
 		if len(recs) == 0 {
 			// No legal moves, discard to table
 			state.applyMove(current, Move{Type: Discard}, tile)
@@ -667,7 +651,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 			fmt.Println("Placed on table.")
 			return
 		case "r":
-			recs := bestMoves(board, tile, state)
+			recs := state.bestMoves(board, tile)
 			if len(recs) == 0 {
 				fmt.Println("No legal placements found.")
 				continue
@@ -779,7 +763,7 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 	bestIndex := 0
 	// --- check table tiles ---
 	for i, t := range state.Table {
-		moves := bestMoves(board, t, state)
+		moves := state.bestMoves(board, t)
 		if len(moves) == 0 {
 			continue
 		}
@@ -795,7 +779,7 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 	// --- check top of draw pile ---
 	if len(state.Draw) > 0 {
 		t := state.Draw[0]
-		moves := bestMoves(board, t, state)
+		moves := state.bestMoves(board, t)
 		if len(moves) > 0 && moves[0].Score > bestScore {
 			bestScore = moves[0].Score
 			bestTile = t
