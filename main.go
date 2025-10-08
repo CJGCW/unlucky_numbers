@@ -36,9 +36,9 @@ type Board struct {
 }
 
 type GameState struct {
-	Boards []*Board
-	Table  []int
-	Draw   []int
+	Boards  []*Board
+	Table   []int
+	Draw    []int
 	Analyze bool
 	Current int //track player turns for save/load actions
 }
@@ -47,8 +47,20 @@ var reader = bufio.NewReader(os.Stdin)
 
 // ---------------- Utility ----------------
 
-func max(a, b int) int { if a > b { return a } else { return b } }
-func min(a, b int) int { if a < b { return a } else { return b } }
+func max(a, b int) int {
+	if a > b {
+		return a
+	} else {
+		return b
+	}
+}
+func min(a, b int) int {
+	if a < b {
+		return a
+	} else {
+		return b
+	}
+}
 
 // remainingTiles returns a set of tiles that are not on any board or on the table
 func remainingTiles(state *GameState) map[int]bool {
@@ -119,14 +131,21 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 	return true
 }
 
-
 // legalRange returns min/max value that can go at (r,c)
 func legalRange(board *Board, r, c int) (lo, hi int) {
 	lo, hi = 1, 20
-	if r > 0 && board.Grid[r-1][c] != 0 { lo = max(lo, board.Grid[r-1][c]+1) }
-	if r < BoardSize-1 && board.Grid[r+1][c] != 0 { hi = min(hi, board.Grid[r+1][c]-1) }
-	if c > 0 && board.Grid[r][c-1] != 0 { lo = max(lo, board.Grid[r][c-1]+1) }
-	if c < BoardSize-1 && board.Grid[r][c+1] != 0 { hi = min(hi, board.Grid[r][c+1]-1) }
+	if r > 0 && board.Grid[r-1][c] != 0 {
+		lo = max(lo, board.Grid[r-1][c]+1)
+	}
+	if r < BoardSize-1 && board.Grid[r+1][c] != 0 {
+		hi = min(hi, board.Grid[r+1][c]-1)
+	}
+	if c > 0 && board.Grid[r][c-1] != 0 {
+		lo = max(lo, board.Grid[r][c-1]+1)
+	}
+	if c < BoardSize-1 && board.Grid[r][c+1] != 0 {
+		hi = min(hi, board.Grid[r][c+1]-1)
+	}
 	return
 }
 
@@ -198,8 +217,6 @@ func isPlacementFeasible(board *Board, r, c, tile int, remaining map[int]int) bo
 	return true
 }
 
-
-
 // ---------------- AI Evaluation ----------------
 
 // bestPlacement finds the best empty cell for tile, considering remaining tiles
@@ -224,7 +241,9 @@ func bestPlacement(board *Board, tile int, state *GameState) *Cell {
 					count++
 				}
 			}
-			if count == 0 { continue } // cannot fill in future
+			if count == 0 {
+				continue
+			} // cannot fill in future
 			score := 1.0 / float64(count) // fewer options = higher priority
 			if score > bestScore {
 				bestScore = score
@@ -235,11 +254,10 @@ func bestPlacement(board *Board, tile int, state *GameState) *Cell {
 	return best
 }
 
-
 // bestMoves returns the top N moves (placements or swaps) for a drawn tile
 func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
 	type scoredMove struct {
-		move Move
+		move  Move
 		score float64
 	}
 	moves := []scoredMove{}
@@ -317,7 +335,6 @@ func bestMoves(board *Board, tile int, state *GameState, N int) []Move {
 	return result
 }
 
-
 // getRemainingTileCounts excludes opponent tiles from availability
 func getRemainingTileCounts(state *GameState, myBoard *Board) map[int]int {
 	counts := make(map[int]int)
@@ -377,7 +394,7 @@ func ApplyMove(board *Board, move Move, tile int) {
 
 // ---------------- Pretty Printing ----------------
 
-func (state *GameState)PrettyPrintBoardsGridCentered() {
+func (state *GameState) PrettyPrintBoardsGridCentered() {
 	cellWidth := 5
 	repeat := func(s string, n int) string {
 		res := ""
@@ -470,14 +487,13 @@ func (state *GameState)PrettyPrintBoardsGridCentered() {
 }
 
 func contains(slice []int, val int) bool {
-    for _, v := range slice {
-        if v == val {
-            return true
-        }
-    }
-    return false
+	for _, v := range slice {
+		if v == val {
+			return true
+		}
+	}
+	return false
 }
-
 
 func (state *GameState) initDrawStack() {
 	used := map[int]bool{}
@@ -504,7 +520,6 @@ func (state *GameState) initDrawStack() {
 	})
 }
 
-
 func fillRandomDiagonal(b *Board) {
 	available := rand.Perm(20)
 	for i := 0; i < BoardSize; i++ {
@@ -512,9 +527,9 @@ func fillRandomDiagonal(b *Board) {
 	}
 }
 
-func (state *GameState)setUpBoards() {
+func (state *GameState) setUpBoards() {
 	numPlayers := 2
-	
+
 	fmt.Print("Enter number of players (2–4, default 2): ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
@@ -554,7 +569,6 @@ func (state *GameState)setUpBoards() {
 }
 
 func (state *GameState) playGame() {
-	
 
 	for {
 		fmt.Printf("\nPlayer %d's turn\n", state.Current)
@@ -654,7 +668,7 @@ func (state *GameState) promptDrawOrSave() (int, bool) {
 			line, _ := reader.ReadString('\n')
 			filename := strings.TrimSpace(strings.ToLower(line))
 			if !strings.HasSuffix(filename, ".csv") {
-    			filename += ".csv"
+				filename += ".csv"
 			}
 			if err := state.saveToCSV(filename); err != nil {
 				fmt.Println("Failed to save:", err)
@@ -718,174 +732,170 @@ func (state *GameState) drawTile() int {
 	return tile
 }
 
-
 func (state *GameState) saveToCSV(filename string) error {
-    f, err := os.Create(filename)
-    if err != nil {
-        return err
-    }
-    defer f.Close()
+	f, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-    writer := csv.NewWriter(f)
-    defer writer.Flush()
+	writer := csv.NewWriter(f)
+	defer writer.Flush()
 
-    // Write turn info
-    writer.Write([]string{"TURN", strconv.Itoa(state.Current)})
+	// Write turn info
+	writer.Write([]string{"TURN", strconv.Itoa(state.Current)})
 
-    // Write table
-    tableRow := []string{"TABLE"}
-    for _, t := range state.Table {
-        tableRow = append(tableRow, strconv.Itoa(t))
-    }
-    writer.Write(tableRow)
+	// Write table
+	tableRow := []string{"TABLE"}
+	for _, t := range state.Table {
+		tableRow = append(tableRow, strconv.Itoa(t))
+	}
+	writer.Write(tableRow)
 
-    // Write boards
-    for _, board := range state.Boards {
-        for r := 0; r < BoardSize; r++ {
-            row := make([]string, BoardSize)
-            for c := 0; c < BoardSize; c++ {
-                if board.Grid[r][c] == 0 {
-                    row[c] = "."
-                } else {
-                    row[c] = strconv.Itoa(board.Grid[r][c])
-                }
-            }
-            writer.Write(row)
-        }
-    }
+	// Write boards
+	for _, board := range state.Boards {
+		for r := 0; r < BoardSize; r++ {
+			row := make([]string, BoardSize)
+			for c := 0; c < BoardSize; c++ {
+				if board.Grid[r][c] == 0 {
+					row[c] = "."
+				} else {
+					row[c] = strconv.Itoa(board.Grid[r][c])
+				}
+			}
+			writer.Write(row)
+		}
+	}
 
-    return nil
+	return nil
 }
 
 func (state *GameState) loadFromCSV(filename string) error {
-    f, err := os.Open(filename)
-    if err != nil {
-        return err
-    }
-    defer f.Close()
+	f, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-    reader := csv.NewReader(f)
-	reader.FieldsPerRecord = -1 
-    records, err := reader.ReadAll()
-    if err != nil {
-        return err
-    }
+	reader := csv.NewReader(f)
+	reader.FieldsPerRecord = -1
+	records, err := reader.ReadAll()
+	if err != nil {
+		return err
+	}
 
-    if len(records) < 2 {
-        return fmt.Errorf("CSV too short")
-    }
+	if len(records) < 2 {
+		return fmt.Errorf("CSV too short")
+	}
 
-    state.Boards = []*Board{}
-    state.Table = []int{}
-    state.Current = 0
+	state.Boards = []*Board{}
+	state.Table = []int{}
+	state.Current = 0
 
-    usedTiles := map[int]bool{}
+	usedTiles := map[int]bool{}
 
-    // --- Parse turn ---
-    if records[0][0] != "TURN" {
-        return fmt.Errorf("expected TURN record")
-    }
-    if len(records[0]) < 2 {
-        return fmt.Errorf("TURN record missing player index")
-    }
-    cur, err := strconv.Atoi(records[0][1])
-    if err != nil {
-        return err
-    }
-    state.Current = cur
+	// --- Parse turn ---
+	if records[0][0] != "TURN" {
+		return fmt.Errorf("expected TURN record")
+	}
+	if len(records[0]) < 2 {
+		return fmt.Errorf("TURN record missing player index")
+	}
+	cur, err := strconv.Atoi(records[0][1])
+	if err != nil {
+		return err
+	}
+	state.Current = cur
 	fmt.Printf("%d's turn loaded", state.Current)
-    // --- Parse table ---
-    if records[1][0] != "TABLE" {
-        return fmt.Errorf("expected TABLE record")
-    }
-    for _, t := range records[1][1:] {
-        if t == "." {
-            continue
-        }
-        n, err := strconv.Atoi(t)
-        if err != nil {
-            return err
-        }
-        state.Table = append(state.Table, n)
-        usedTiles[n] = true
-    }
+	// --- Parse table ---
+	if records[1][0] != "TABLE" {
+		return fmt.Errorf("expected TABLE record")
+	}
+	for _, t := range records[1][1:] {
+		if t == "." {
+			continue
+		}
+		n, err := strconv.Atoi(t)
+		if err != nil {
+			return err
+		}
+		state.Table = append(state.Table, n)
+		usedTiles[n] = true
+	}
 
-    // --- Parse boards ---
-    var currentBoard *Board
-    rowCounter := 0
-    for _, rec := range records[2:] {
-        if len(rec) != BoardSize {
-            return fmt.Errorf("board row with wrong number of fields")
-        }
-        if rowCounter == 0 {
-            currentBoard = &Board{}
-        }
-        for c, val := range rec {
-            if val == "." {
-                currentBoard.Grid[rowCounter][c] = 0
-            } else {
-                n, err := strconv.Atoi(val)
-                if err != nil {
-                    return err
-                }
-                currentBoard.Grid[rowCounter][c] = n
-                usedTiles[n] = true
-            }
-        }
-        rowCounter++
-        if rowCounter == BoardSize {
-            state.Boards = append(state.Boards, currentBoard)
-            rowCounter = 0
-        }
-    }
+	// --- Parse boards ---
+	var currentBoard *Board
+	rowCounter := 0
+	for _, rec := range records[2:] {
+		if len(rec) != BoardSize {
+			return fmt.Errorf("board row with wrong number of fields")
+		}
+		if rowCounter == 0 {
+			currentBoard = &Board{}
+		}
+		for c, val := range rec {
+			if val == "." {
+				currentBoard.Grid[rowCounter][c] = 0
+			} else {
+				n, err := strconv.Atoi(val)
+				if err != nil {
+					return err
+				}
+				currentBoard.Grid[rowCounter][c] = n
+				usedTiles[n] = true
+			}
+		}
+		rowCounter++
+		if rowCounter == BoardSize {
+			state.Boards = append(state.Boards, currentBoard)
+			rowCounter = 0
+		}
+	}
 
-    // --- Generate draw pile ---
-    tileCounts := 20 * 1 // adjust if using duplicates or more players
-    remaining := []int{}
-    for i := 1; i <= tileCounts; i++ {
-        if !usedTiles[i] {
-            remaining = append(remaining, i)
-        }
-    }
-    rand.Shuffle(len(remaining), func(i, j int) { remaining[i], remaining[j] = remaining[j], remaining[i] })
-    state.Draw = remaining
+	// --- Generate draw pile ---
+	tileCounts := 20 * 1 // adjust if using duplicates or more players
+	remaining := []int{}
+	for i := 1; i <= tileCounts; i++ {
+		if !usedTiles[i] {
+			remaining = append(remaining, i)
+		}
+	}
+	rand.Shuffle(len(remaining), func(i, j int) { remaining[i], remaining[j] = remaining[j], remaining[i] })
+	state.Draw = remaining
 
-    return nil
+	return nil
 }
-
-
 
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	
 	fmt.Print("Load from CSV file? (filename or blank for new game): ")
-csvFile, _ := reader.ReadString('\n')
-csvFile = strings.TrimSpace(csvFile)
+	csvFile, _ := reader.ReadString('\n')
+	csvFile = strings.TrimSpace(csvFile)
 
-state := &GameState{}
+	state := &GameState{}
 
-if csvFile != "" {
-    if err := state.loadFromCSV(csvFile); err != nil {
-        fmt.Println("Failed to load:", err)
-        return
-    }
-    fmt.Println("Loaded game from", csvFile)
-} else {
-    fmt.Print("Play or Analyze? (p/a): ")
-    mode, _ := reader.ReadString('\n')
-    mode = strings.TrimSpace(strings.ToLower(mode))
-    if mode == "a" || mode == "analyze" {
-		state.Analyze = true
-		fmt.Println("Analyze mode selected — manual board setup enabled.")
+	if csvFile != "" {
+		if err := state.loadFromCSV(csvFile); err != nil {
+			fmt.Println("Failed to load:", err)
+			return
+		}
+		fmt.Println("Loaded game from", csvFile)
 	} else {
-		state.Analyze = false
-		fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
-	}
+		fmt.Print("Play or Analyze? (p/a): ")
+		mode, _ := reader.ReadString('\n')
+		mode = strings.TrimSpace(strings.ToLower(mode))
+		if mode == "a" || mode == "analyze" {
+			state.Analyze = true
+			fmt.Println("Analyze mode selected — manual board setup enabled.")
+		} else {
+			state.Analyze = false
+			fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
+		}
 
-    state.setUpBoards()
-}
+		state.setUpBoards()
+	}
 	state.PrettyPrintBoardsGridCentered()
 	state.playGame()
-	
+
 }
