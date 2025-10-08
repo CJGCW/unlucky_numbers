@@ -33,6 +33,7 @@ type Move struct {
 
 type Board struct {
 	Grid [BoardSize][BoardSize]int
+	IsAi bool // the enemy!
 }
 
 type GameState struct {
@@ -394,6 +395,9 @@ func (state *GameState) PrettyPrintBoardsGridCentered() {
 	// --- Print Boards ---
 	for i := range state.Boards {
 		header := fmt.Sprintf("Player %d", i)
+		if state.Boards[i].IsAi {
+			header = fmt.Sprintf("Computer %d", i)
+		}
 		padding := (boardWidth - len(header)) / 2
 		fmt.Printf("%s%s%s", repeat(" ", padding), header, repeat(" ", boardWidth-len(header)-padding))
 		if i < len(state.Boards)-1 {
@@ -490,25 +494,65 @@ func fillRandomDiagonal(b *Board) {
 }
 
 func (state *GameState) setUpBoards() {
-	numPlayers := 2
-
-	fmt.Print("Enter number of players (2–4, default 2): ")
+	// --- Ask number of human and AI players ---
+	numHumans := 0
+	fmt.Print("Number of human players (1-4, default 1): ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line != "" {
-		n, _ := strconv.Atoi(line)
-		numPlayers = n
+		n, err := strconv.Atoi(line)
+		if err == nil && n >= 1 && n <= 4 {
+			numHumans = n
+		} else {
+			numHumans = 1
+		}
+	} else {
+		numHumans = 1
 	}
 
+	numAI := 0
+	fmt.Print("Number of computer players (0-4, default 1): ")
+	line, _ = reader.ReadString('\n')
+	line = strings.TrimSpace(line)
+	if line != "" {
+		n, err := strconv.Atoi(line)
+		if err == nil && n >= 0 && n <= 4 {
+			numAI = n
+		} else {
+			numAI = 1
+		}
+	} else {
+		numAI = 1
+	}
+
+	totalPlayers := numHumans + numAI
+	if totalPlayers > 4 {
+		fmt.Println("Max players is 4 — adjusting to 4")
+		totalPlayers = 4
+		if numAI > 4-numHumans {
+			numAI = 4 - numHumans
+		}
+	}
 	if !state.Analyze {
 		state.initDrawStack()
 	}
-
-	for p := 0; p < numPlayers; p++ {
+	// --- Set up boards ---
+	for p := 0; p < totalPlayers; p++ {
 		b := &Board{}
 
+		// Assign AI flag
+		if p >= numHumans {
+			b.IsAi = true
+			fmt.Printf("Computer %d board initialized.\n", p-numHumans+1)
+		} else {
+			b.IsAi = false
+			fmt.Printf("Player %d board initialized.\n", p+1)
+		}
+
+		// Diagonal setup
 		if state.Analyze {
-			fmt.Printf("Enter 4 numbers for Player %d diagonal positions (or leave blank for random): ", p)
+			fmt.Printf("Enter 4 numbers for %s diagonal positions (or leave blank for random): ",
+				map[bool]string{true: "Computer", false: "Player"}[b.IsAi])
 			input, _ := reader.ReadString('\n')
 			input = strings.TrimSpace(input)
 			if input == "" {
@@ -538,16 +582,22 @@ func promptBrunoVariant() bool {
 }
 
 func (state *GameState) playGame() {
-
 	for {
-		fmt.Printf("\nPlayer %d's turn\n", state.Current)
+		board := state.Boards[state.Current]
 
-		// --- Turn start prompt: draw / save / quit ---
-		tile, quit := state.promptDrawOrSave()
-		if quit || tile == -1 {
-			fmt.Println("Exiting game.")
-			return
+		var tile int
+		if board.IsAi {
+			tile, _ = state.drawTileRecommendation()
+		} else {
+			var quit bool
+			tile, quit = state.promptDrawOrSave()
+			if quit || tile == -1 {
+				fmt.Println("Exiting game.")
+				return
+			}
 		}
+
+		// Unified placement for both human and AI
 		state.promptPlacement(state.Current, tile)
 
 		state.PrettyPrintBoardsGridCentered()
@@ -580,6 +630,39 @@ func checkBrunoExtra(board *Board, r, c int) bool {
 func (state *GameState) promptPlacement(current, tile int) {
 	board := state.Boards[current]
 
+	// --- AI-controlled board auto-play ---
+	if board.IsAi {
+		recs := bestMoves(board, tile, state)
+		if len(recs) == 0 {
+			// No legal moves, discard to table
+			state.applyMove(current, Move{Type: Discard}, tile)
+			fmt.Printf("Computer %d discards %d to table.\n", current, tile)
+			return
+		}
+
+		// Pick best move
+		move := recs[0]
+		old := board.Grid[move.Cell.R][move.Cell.C]
+		extra := state.applyMove(current, move, tile)
+
+		if move.Type == Swap && old != 0 {
+			fmt.Printf("Computer %d swaps %d into table, places %d at (%d,%d).\n",
+				current, old, tile, move.Cell.R, move.Cell.C)
+		} else {
+			fmt.Printf("Computer %d places %d at (%d,%d).\n",
+				current, tile, move.Cell.R, move.Cell.C)
+		}
+
+		if extra {
+			fmt.Println("Computer gets extra turn!")
+			tile, _ = state.drawTileRecommendation()
+			state.promptPlacement(current, tile)
+		}
+
+		return
+	}
+
+	// --- Human player flow continues unchanged ---
 	for {
 		fmt.Printf("Action for %d? ([r]ecommend, [t]able, or row,col): ", tile)
 		action, _ := reader.ReadString('\n')
@@ -591,39 +674,33 @@ func (state *GameState) promptPlacement(current, tile int) {
 			state.applyMove(current, move, tile)
 			fmt.Println("Placed on table.")
 			return
-
 		case "r":
 			recs := bestMoves(board, tile, state)
 			if len(recs) == 0 {
 				fmt.Println("No legal placements found.")
 				continue
 			}
-
 			for i, m := range recs {
 				fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
 					i+1,
 					map[MoveType]string{Place: "Place", Swap: "Swap"}[m.Type],
 					m.Cell.R, m.Cell.C, m.Score)
 			}
-
 			fmt.Print("Choose move number or press Enter to skip: ")
 			choice, _ := reader.ReadString('\n')
 			choice = strings.TrimSpace(choice)
 			if choice == "" {
 				continue
 			}
-
 			idx, err := strconv.Atoi(choice)
 			if err == nil && idx >= 1 && idx <= len(recs) {
 				extra := state.applyMove(current, recs[idx-1], tile)
 				if extra {
-					continue // Bruno extra turn
+					continue
 				}
 				return
 			}
-
 			fmt.Println("Invalid choice.")
-
 		default:
 			parts := strings.Split(action, ",")
 			if len(parts) == 2 {
@@ -631,13 +708,9 @@ func (state *GameState) promptPlacement(current, tile int) {
 				c, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 				if err1 == nil && err2 == nil && r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
 					if isLegalPlacement(board, tile, r, c) {
-						move := Move{
-							Type: Place,
-							Cell: &Cell{R: r, C: c},
-						}
+						move := Move{Type: Place, Cell: &Cell{R: r, C: c}}
 						old := board.Grid[r][c]
 						extra := state.applyMove(current, move, tile)
-
 						if old != 0 {
 							state.Table = append(state.Table, old)
 							fmt.Printf("Swapped %d into table, placed %d at (%d,%d).\n", old, tile, r, c)
@@ -645,7 +718,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 							fmt.Printf("Placed %d at (%d,%d).\n", tile, r, c)
 						}
 						if extra {
-							continue // don’t advance turn
+							continue
 						}
 						return
 					}
@@ -658,7 +731,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 
 func (state *GameState) promptDrawOrSave() (int, bool) {
 	for {
-		fmt.Print("[d]raw, [s]ave, or [q]uit? ")
+		fmt.Print("[d]raw, [r]ecommend, [s]ave, or [q]uit? ")
 		line, _ := reader.ReadString('\n')
 		line = strings.TrimSpace(strings.ToLower(line))
 
@@ -694,10 +767,76 @@ func (state *GameState) promptDrawOrSave() (int, bool) {
 				return tile, false
 			}
 			return state.drawTile(), false
+		case "r":
+			tile, fromTable := state.drawTileRecommendation()
+			if fromTable {
+				fmt.Printf("Drawing tile %d from the table is the best choice\n", tile)
+			}
 		default:
 			fmt.Println("Invalid option.")
 		}
 	}
+}
+
+func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
+	board := state.Boards[state.Current]
+
+	bestScore := -1.0
+	bestTile := 0
+	bestFromTable := false
+	bestIndex := 0
+	// --- check table tiles ---
+	for i, t := range state.Table {
+		moves := bestMoves(board, t, state)
+		if len(moves) == 0 {
+			continue
+		}
+		score := moves[0].Score // pick top move's score
+		if score > bestScore {
+			bestScore = score
+			bestTile = t
+			bestFromTable = true
+			bestIndex = i
+		}
+	}
+
+	// --- check top of draw pile ---
+	if len(state.Draw) > 0 {
+		t := state.Draw[0]
+		moves := bestMoves(board, t, state)
+		if len(moves) > 0 && moves[0].Score > bestScore {
+			bestScore = moves[0].Score
+			bestTile = t
+			bestFromTable = false
+		}
+	}
+
+	// --- draw the chosen tile ---
+	if bestTile == 0 {
+		// No legal moves anywhere, just take top of draw pile or table
+		if len(state.Draw) > 0 {
+			bestTile = state.Draw[0]
+			bestFromTable = false
+		} else if len(state.Table) > 0 {
+			bestTile = state.Table[0]
+			bestFromTable = true
+		} else {
+			fmt.Println("No tiles to draw — game over.")
+			os.Exit(0)
+		}
+	}
+
+	if board.IsAi {
+		if bestFromTable {
+			state.Table = append(state.Table[:bestIndex], state.Table[bestIndex+1:]...)
+			fmt.Printf("Computer %d draws %d from table\n", state.Current, bestTile)
+		} else {
+			state.Draw = state.Draw[1:]
+			fmt.Printf("Computer %d draws %d from pile\n", state.Current, bestTile)
+		}
+	}
+
+	return bestTile, bestFromTable
 }
 
 func (state *GameState) drawTile() int {
@@ -854,7 +993,7 @@ func (state *GameState) loadFromCSV(filename string) error {
 	}
 
 	// --- Generate draw pile ---
-	tileCounts := 20 * 1 // adjust if using duplicates or more players
+	tileCounts := 20 * len(state.Boards) // adjust if using duplicates or more players
 	remaining := []int{}
 	for i := 1; i <= tileCounts; i++ {
 		if !usedTiles[i] {
