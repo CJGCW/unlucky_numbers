@@ -120,20 +120,33 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 }
 
 // ---------------- AI Evaluation ----------------
-func placementScore(tile int, r, c int) float64 {
-	// Normalize tile to 0..1 range (1..20)
-	norm := float64(tile-1) / float64(BoardSize*BoardSize-1) // 0..1
+func placementScore(tile, r, c int) float64 {
+	// Normalize row/col and tile into [0, 1] range
+	rowNorm := float64(r) / float64(BoardSize-1)         // 0 at top, 1 at bottom
+	colNorm := float64(c) / float64(BoardSize-1)         // 0 at left, 1 at right
+	posNorm := (rowNorm + colNorm) / 2.0                 // average positional "depth"
+	tileNorm := float64(tile-1) / float64(BoardSize*5-1) // 0 for 1, 1 for 20
 
-	// Desired row/col for this tile
-	desired := norm * float64(BoardSize-1) // 0..3
+	// The ideal position for a tile should roughly match its tile value
+	// So we use 1 - |tileNorm - posNorm| to measure how aligned they are.
+	alignment := 1.0 - math.Abs(tileNorm-posNorm)
 
-	// Penalize distance from desired row and col
-	rowDiff := float64(r) - desired
-	colDiff := float64(c) - desired
+	// Apply a weighting curve so edge placements are slightly devalued
+	edgePenalty := 1.0 - 0.2*math.Abs(0.5-posNorm)*2.0 // center slightly preferred
 
-	score := -(rowDiff*rowDiff + colDiff*colDiff) // negative distance squared
+	// Combine
+	score := alignment * edgePenalty
+
+	// Clamp and normalize
+	if score < 0 {
+		score = 0
+	} else if score > 1 {
+		score = 1
+	}
+
 	return score
 }
+
 func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
 	remaining := append(state.Draw, state.Table...)
 	// Check above
@@ -204,59 +217,154 @@ func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
 }
 
 func (state *GameState) bestMoves(board *Board, tile int) []Move {
-	var moves []Move
-
-	// Precompute remaining tiles for feasibility checks
-	remaining := make(map[int]bool)
-	for _, t := range state.Draw {
-		remaining[t] = true
-	}
-	for _, t := range state.Table {
-		remaining[t] = true
-	}
+	moves := []Move{}
 
 	for r := 0; r < BoardSize; r++ {
 		for c := 0; c < BoardSize; c++ {
-			if board.Grid[r][c] == 0 {
-				move := Move{Type: Place, Cell: &Cell{R: r, C: c}}
-				if state.isPlacementFeasible(board, r, c, tile) {
-					move.Score = placementScore(r, c, tile) // your scoring function
-					moves = append(moves, move)
-				}
-			} else {
-				// Consider swap if swapping is legal
-				old := board.Grid[r][c]
-				move := Move{Type: Swap, Cell: &Cell{R: r, C: c}}
-				if tile > old && state.isPlacementFeasible(board, r, c, tile) {
-					move.Score = placementScore(r, c, tile) // score swap same as placement
-					moves = append(moves, move)
+			current := board.Grid[r][c]
+
+			// --- Check legal placement without swap ---
+			feasible := state.isPlacementFeasible(board, r, c, tile)
+			//fmt.Printf("placing %d on %d, %d feasibility is %v\n", tile, r, c, feasible)
+			if current == 0 && feasible {
+				score := state.placementScore(tile, r, c, board)
+				moves = append(moves, Move{
+					Type:  Place,
+					Cell:  &Cell{R: r, C: c},
+					Score: score,
+				})
+			}
+
+			// --- Consider swap only if cell is occupied ---
+			if current != 0 && feasible {
+				newScore := state.placementScore(tile, r, c, board)
+				oldScore := state.placementScore(current, r, c, board)
+
+				// Only swap if significant improvement and feasible future
+				if newScore > oldScore*1.05 { // at least 5% improvement
+					moves = append(moves, Move{
+						Type:    Swap,
+						Cell:    &Cell{R: r, C: c},
+						OldTile: current,
+						Score:   newScore,
+					})
 				}
 			}
+
 		}
 	}
 
-	// Sort descending by score
-	sort.Slice(moves, func(i, j int) bool {
+	// Sort descending by Score
+	sort.SliceStable(moves, func(i, j int) bool {
 		return moves[i].Score > moves[j].Score
 	})
 
 	return moves
 }
 
-func positionalScore(tile, r, c int, minTile, maxTile, BoardSize int, board *Board) float64 {
-	// Normalize tile value
-	norm := float64(tile-minTile) / float64(maxTile-minTile)
+// placementScore calculates base placement score adjusted by future feasibility
+func (state *GameState) placementScore(tile, r, c int, board *Board) float64 {
+	base := 1 / math.Abs(1-float64((r+1)*(c+1))*1.25/float64(tile))
 
-	// Normalize board position
-	posWeight := (float64(r) + float64(c)) / float64((BoardSize-1)*2)
+	rowProb := state.futureRowProbability(board, r, c, tile)
+	colProb := state.futureColProbability(board, r, c, tile)
+	//fmt.Printf("Tile %d at [%d,%d] has a base score of %v, RowProb of %v, and colProb of %v\n", tile, r, c, base, rowProb, colProb)
+	return base * rowProb * colProb
+}
 
-	// Alignment score (how well tile fits the position)
-	alignment := 1.0 - math.Abs(norm-posWeight)
+// Compute probability row can be filled with remaining tiles
+func (state *GameState) futureRowProbability(board *Board, r, c, tile int) float64 {
+	prob := 1.0
+	for cc := 0; cc < BoardSize; cc++ {
+		if cc == c || board.Grid[r][cc] != 0 {
+			continue
+		}
+		dist := math.Abs(float64(cc - c))
+		weight := 1.0 / (dist + 1.0) // close cells weigh more
 
-	// Feasibility: reward cells that leave row/col flexible
-	feasibility := estimateFutureFlexibility(board, r, c, tile)
+		min, max := state.rowConstraints(board, r, cc)
+		p := state.remainingProbability(min, max)
 
-	return alignment * feasibility
+		// soften extreme effects
+		prob *= 1 - weight*(1-p)
+	}
+	return prob
+}
+
+func (state *GameState) futureColProbability(board *Board, r, c, tile int) float64 {
+	prob := 1.0
+	for rr := 0; rr < BoardSize; rr++ {
+		if rr == r || board.Grid[rr][c] != 0 {
+			continue
+		}
+		dist := math.Abs(float64(rr - r))
+		weight := 1.0 / (dist + 1.0)
+
+		min, max := state.colConstraints(board, rr, c)
+		p := state.remainingProbability(min, max)
+
+		prob *= 1 - weight*(1-p)
+	}
+	return prob
+}
+
+// Compute probability a remaining tile fits in a range
+func (state *GameState) remainingProbability(min, max int) float64 {
+	if min >= max {
+		return 1.0
+	}
+	total := 0
+	count := 0
+	for _, t := range append(state.Draw, state.Table...) {
+		if t >= min && t <= max {
+			count++
+		}
+		total++
+	}
+	if total == 0 {
+		return 0
+	}
+	return float64(count) / float64(total)
+}
+
+// rowConstraints returns the min/max value that a cell in the row can hold
+func (state *GameState) rowConstraints(board *Board, r, c int) (int, int) {
+	min, max := 1, BoardSize*5
+	// look left
+	for cc := c - 1; cc >= 0; cc-- {
+		if board.Grid[r][cc] != 0 {
+			min = board.Grid[r][cc] + 1
+			break
+		}
+	}
+	// look right
+	for cc := c + 1; cc < BoardSize; cc++ {
+		if board.Grid[r][cc] != 0 {
+			max = board.Grid[r][cc] - 1
+			break
+		}
+	}
+	return min, max
+}
+
+// colConstraints returns the min/max value that a cell in the column can hold
+func (state *GameState) colConstraints(board *Board, r, c int) (int, int) {
+	min, max := 1, BoardSize*5
+	// look above
+	for rr := r - 1; rr >= 0; rr-- {
+		if board.Grid[rr][c] != 0 {
+			min = board.Grid[rr][c] + 1
+			break
+		}
+	}
+	// look below
+	for rr := r + 1; rr < BoardSize; rr++ {
+		if board.Grid[rr][c] != 0 {
+			max = board.Grid[rr][c] - 1
+			break
+		}
+	}
+	return min, max
 }
 
 // estimateFutureFlexibility returns a value 0..1 based on how many legal options
@@ -329,7 +437,10 @@ func (state *GameState) applyMove(current int, move Move, tile int) bool {
 		fmt.Println("Discarded to table.")
 		return false
 	}
-
+	if board.IsFull() {
+		fmt.Println("GAME OVER!")
+		os.Exit(0)
+	}
 	return state.BrunoVariant && checkBrunoExtra(board, move.Cell.R, move.Cell.C)
 }
 
@@ -477,7 +588,7 @@ func (state *GameState) setUpBoards() {
 	line = strings.TrimSpace(line)
 	if line != "" {
 		n, err := strconv.Atoi(line)
-		if err == nil && n >= 1 && n <= 4 {
+		if err == nil && n >= 0 && n <= 4 {
 			numHumans = n
 		} else {
 			numHumans = 1
@@ -577,6 +688,10 @@ func (state *GameState) playGame() {
 		state.promptPlacement(state.Current, tile)
 
 		state.PrettyPrintBoardsGridCentered()
+		if board.IsFull() {
+			fmt.Println("GAME OVER PG!")
+			os.Exit(0)
+		}
 		state.Current = (state.Current + 1) % len(state.Boards)
 	}
 }
@@ -601,6 +716,17 @@ func checkBrunoExtra(board *Board, r, c int) bool {
 		}
 	}
 	return false
+}
+
+func (b *Board) IsFull() bool {
+	for r := 0; r < BoardSize; r++ {
+		for c := 0; c < BoardSize; c++ {
+			if b.Grid[r][c] == 0 {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (state *GameState) promptPlacement(current, tile int) {
@@ -990,7 +1116,16 @@ func main() {
 	csvFile = strings.TrimSpace(csvFile)
 
 	state := &GameState{}
-
+	fmt.Print("Play or Analyze? (p/a): ")
+	mode, _ := reader.ReadString('\n')
+	mode = strings.TrimSpace(strings.ToLower(mode))
+	if mode == "a" || mode == "analyze" {
+		state.Analyze = true
+		fmt.Println("Analyze mode selected — manual board setup enabled.")
+	} else {
+		state.Analyze = false
+		fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
+	}
 	if csvFile != "" {
 		if err := state.loadFromCSV(csvFile); err != nil {
 			fmt.Println("Failed to load:", err)
@@ -998,16 +1133,6 @@ func main() {
 		}
 		fmt.Println("Loaded game from", csvFile)
 	} else {
-		fmt.Print("Play or Analyze? (p/a): ")
-		mode, _ := reader.ReadString('\n')
-		mode = strings.TrimSpace(strings.ToLower(mode))
-		if mode == "a" || mode == "analyze" {
-			state.Analyze = true
-			fmt.Println("Analyze mode selected — manual board setup enabled.")
-		} else {
-			state.Analyze = false
-			fmt.Println("Play mode selected — automatic setup and draw pile enabled.")
-		}
 
 		state.setUpBoards()
 	}
