@@ -611,18 +611,14 @@ func contains(slice []int, val int) bool {
 }
 
 func (state *GameState) initDrawStack(totalPlayers int) {
-	fmt.Printf("Initialized with %d boards\n", totalPlayers)
 	for b := 1; b <= totalPlayers; b++ {
 		for i := 1; i <= 20; i++ {
-			fmt.Printf("Appending with %d tile\n", i)
 			state.Draw = append(state.Draw, i)
 		}
 	}
-	fmt.Printf("Initialized with %d tiles\n", len(state.Draw))
 	rand.Shuffle(len(state.Draw), func(i, j int) {
 		state.Draw[i], state.Draw[j] = state.Draw[j], state.Draw[i]
 	})
-	fmt.Printf("Initialized with %d tiles\n", len(state.Draw))
 }
 
 func fillRandomDiagonal(b *Board) {
@@ -943,27 +939,43 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 	// --- Step 1: Look for weak tiles ---
 	weakTiles := state.weakTiles()
 
-	if len(weakTiles) > 0 {
-
-		weakest := weakTiles[0]
-		// Check table tiles for possible replacements
-		for i, t := range state.Table {
-			// Evaluate this table tile’s best score on the board
-			moves := state.bestMoves(board, t)
-			if len(moves) == 0 {
-				continue
-			}
-			score := moves[0].Score
-			// We only consider swapping if table tile > threshold
-			if score > bestScore {
-				bestScore = score
-				bestTile = t
-				bestFromTable = true
-				bestIndex = i
-			}
+	for i, t := range state.Table {
+		// Evaluate this table tile’s best score on the board
+		moves := state.bestMoves(board, t)
+		if len(moves) == 0 {
+			continue
 		}
+		score := moves[0].Score
+		// We only consider swapping if table tile > threshold
+		if score > bestScore {
+			bestScore = score
+			bestTile = t
+			bestFromTable = true
+			bestIndex = i
+		}
+	}
 
-		if bestFromTable {
+	// Check table tiles for possible replacements
+	/*for i, t := range state.Table {
+		// Evaluate this table tile’s best score on the board
+		moves := state.bestMoves(board, t)
+		if len(moves) == 0 {
+			continue
+		}
+		score := moves[0].Score
+		// We only consider swapping if table tile > threshold
+		if score > bestScore {
+			bestScore = score
+			bestTile = t
+			bestFromTable = true
+			bestIndex = i
+		}
+	}*/
+
+	if bestFromTable {
+		if len(weakTiles) > 0 {
+
+			weakest := weakTiles[0]
 			// Perform the swap with the *weakest* tile
 
 			weakestScore := baseScore(board.Grid[weakest.R][weakest.C], weakest.R, weakest.C)
@@ -985,21 +997,21 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 
 			// Replace it on board
 			board.Grid[weakest.R][weakest.C] = bestTile
-			return bestTile, true
-		}
-	}
 
-	if board.IsAi {
-		if bestFromTable {
-			state.Table = append(state.Table[:bestIndex], state.Table[bestIndex+1:]...)
-			fmt.Printf("AI %d draws %d from table\n", state.Current, bestTile)
 		} else {
-			bestTile = state.Draw[0]
-			state.Draw = state.Draw[1:]
-			fmt.Printf("AI %d draws %d from pile\n", state.Current, bestTile)
-		}
-	}
+			if board.IsAi {
 
+				state.Table = append(state.Table[:bestIndex], state.Table[bestIndex+1:]...)
+				fmt.Printf("AI %d draws %d from table\n", state.Current, bestTile)
+			}
+		}
+
+		return bestTile, true
+	} else if board.IsAi {
+		bestTile = state.Draw[0]
+		state.Draw = state.Draw[1:]
+		fmt.Printf("AI %d draws %d from pile\n", state.Current, bestTile)
+	}
 	return bestTile, bestFromTable
 }
 
