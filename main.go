@@ -47,6 +47,7 @@ type GameState struct {
 }
 
 var reader = bufio.NewReader(os.Stdin)
+var threshold = .50
 
 // ---------------- Utility ----------------
 
@@ -262,14 +263,94 @@ func (state *GameState) bestMoves(board *Board, tile int) []Move {
 	return moves
 }
 
+func baseScore(tile, r, c int) float64 {
+	// I REFUSE TO DELETE THIS
+	// old way return 1 / math.Abs(1-float64((r+1)*(c+1))*1.25/float64(tile))
+	/* second way
+	k := 1.0 // change k values for score attunement k of 0.5 is looser, k of 2.0 is more strict
+	x := 2.0 * float64(tile) / float64(r*c)
+	return 100 * math.Exp(-k*math.Abs(math.Log(x)))
+	if tile > 10 {
+		math.Abs(1 - float64((r+1)*(c+1))*1.25/float64(tile))
+	}
+	return float64(2+r+c)/2 + 0.32*float64(tile-1)
+	*/
+	//score := float64(r+c+2) / math.Round(2+0.32*float64(tile))
+	return CellScore(r+1, c+1, tile, 1.00)
+
+}
+func xOfT(t int) float64 {
+	return 2.0 + 0.32*float64(t-1)
+}
+
+// score for how well time t fits cell (r,c)
+func CellScore(r, c, t int, alpha float64) float64 {
+	dCell := float64(r + c)
+	diff := xOfT(t) - dCell
+	return 100 * math.Exp(-alpha*diff*diff)
+}
+
 // placementScore calculates base placement score adjusted by future feasibility
 func (state *GameState) placementScore(tile, r, c int, board *Board) float64 {
-	base := 1 / math.Abs(1-float64((r+1)*(c+1))*1.25/float64(tile))
+	base := baseScore(tile, r, c)
 
 	rowProb := state.futureRowProbability(board, r, c, tile)
 	colProb := state.futureColProbability(board, r, c, tile)
 	//fmt.Printf("Tile %d at [%d,%d] has a base score of %v, RowProb of %v, and colProb of %v\n", tile, r, c, base, rowProb, colProb)
 	return base * rowProb * colProb
+}
+
+func (state *GameState) weakTiles() []Cell {
+	board := state.Boards[state.Current]
+	moves := []Cell{}
+
+	for r := 0; r < BoardSize; r++ {
+		for c := 0; c < BoardSize; c++ {
+			current := board.Grid[r][c]
+
+			if current == 0 {
+				continue
+			} else {
+				score := baseScore(current, r, c)
+				if score < threshold {
+					moves = append(moves, Cell{
+						R: r,
+						C: c,
+					})
+				}
+			}
+		}
+	}
+	return moves
+
+}
+
+func (state *GameState) printMap(tile int) {
+	fmt.Printf("tile %d ", tile)
+	fmt.Println("Base")
+	for r := 0; r < BoardSize; r++ {
+
+		for c := 0; c < BoardSize; c++ {
+			fmt.Print("| ")
+			score := baseScore(tile, r, c)
+			fmt.Printf("%5.2f", score)
+			fmt.Print("| ")
+		}
+		fmt.Println()
+		fmt.Println("____________________________________")
+	}
+	fmt.Println("Placement")
+	for r := 0; r < BoardSize; r++ {
+
+		for c := 0; c < BoardSize; c++ {
+			fmt.Print("| ")
+			score := placementScore(tile, r, c)
+			fmt.Printf("%5.2f", score)
+			fmt.Print("| ")
+		}
+		fmt.Println()
+		fmt.Println("____________________________________")
+	}
 }
 
 // Compute probability row can be filled with remaining tiles
@@ -365,25 +446,6 @@ func (state *GameState) colConstraints(board *Board, r, c int) (int, int) {
 		}
 	}
 	return min, max
-}
-
-// estimateFutureFlexibility returns a value 0..1 based on how many legal options
-// remain in the row and column after placing tile.
-func estimateFutureFlexibility(board *Board, r, c, tile int) float64 {
-	BoardSize := len(board.Grid)
-	count := 0
-
-	// Check row and column constraints
-	for i := 0; i < BoardSize; i++ {
-		if i != c && board.Grid[r][i] == 0 {
-			count++
-		}
-		if i != r && board.Grid[i][c] == 0 {
-			count++
-		}
-	}
-
-	return 0.5 + 0.5*float64(count)/float64((BoardSize-1)*2) // normalize to 0.5..1
 }
 
 // getRemainingTileCounts excludes opponent tiles from availability
@@ -548,29 +610,19 @@ func contains(slice []int, val int) bool {
 	return false
 }
 
-func (state *GameState) initDrawStack() {
-	used := map[int]bool{}
-	for _, b := range state.Boards {
-		for r := 0; r < BoardSize; r++ {
-			for c := 0; c < BoardSize; c++ {
-				if b.Grid[r][c] != 0 {
-					used[b.Grid[r][c]] = true
-				}
-			}
-		}
-	}
-	for _, t := range state.Table {
-		used[t] = true
-	}
-
-	for i := 1; i <= 20; i++ {
-		if !used[i] {
+func (state *GameState) initDrawStack(totalPlayers int) {
+	fmt.Printf("Initialized with %d boards\n", totalPlayers)
+	for b := 1; b <= totalPlayers; b++ {
+		for i := 1; i <= 20; i++ {
+			fmt.Printf("Appending with %d tile\n", i)
 			state.Draw = append(state.Draw, i)
 		}
 	}
+	fmt.Printf("Initialized with %d tiles\n", len(state.Draw))
 	rand.Shuffle(len(state.Draw), func(i, j int) {
 		state.Draw[i], state.Draw[j] = state.Draw[j], state.Draw[i]
 	})
+	fmt.Printf("Initialized with %d tiles\n", len(state.Draw))
 }
 
 func fillRandomDiagonal(b *Board) {
@@ -621,7 +673,7 @@ func (state *GameState) setUpBoards() {
 		}
 	}
 	if !state.Analyze {
-		state.initDrawStack()
+		state.initDrawStack(totalPlayers)
 	}
 	// --- Set up boards ---
 	for p := 0; p < totalPlayers; p++ {
@@ -883,58 +935,68 @@ func (state *GameState) promptDrawOrSave() (int, bool) {
 func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 	board := state.Boards[state.Current]
 
-	bestScore := -1.0
+	bestScore := threshold
 	bestTile := 0
 	bestFromTable := false
 	bestIndex := 0
-	// --- check table tiles ---
-	for i, t := range state.Table {
-		moves := state.bestMoves(board, t)
-		if len(moves) == 0 {
-			continue
-		}
-		score := moves[0].Score // pick top move's score
-		if score > bestScore {
-			bestScore = score
-			bestTile = t
-			bestFromTable = true
-			bestIndex = i
-		}
-	}
 
-	// --- check top of draw pile ---
-	if len(state.Draw) > 0 {
-		t := state.Draw[0]
-		moves := state.bestMoves(board, t)
-		if len(moves) > 0 && moves[0].Score > bestScore {
-			bestScore = moves[0].Score
-			bestTile = t
-			bestFromTable = false
-		}
-	}
+	// --- Step 1: Look for weak tiles ---
+	weakTiles := state.weakTiles()
 
-	// --- draw the chosen tile ---
-	if bestTile == 0 {
-		// No legal moves anywhere, just take top of draw pile or table
-		if len(state.Draw) > 0 {
-			bestTile = state.Draw[0]
-			bestFromTable = false
-		} else if len(state.Table) > 0 {
-			bestTile = state.Table[0]
-			bestFromTable = true
-		} else {
-			fmt.Println("No tiles to draw — game over.")
-			os.Exit(0)
+	if len(weakTiles) > 0 {
+
+		weakest := weakTiles[0]
+		// Check table tiles for possible replacements
+		for i, t := range state.Table {
+			// Evaluate this table tile’s best score on the board
+			moves := state.bestMoves(board, t)
+			if len(moves) == 0 {
+				continue
+			}
+			score := moves[0].Score
+			// We only consider swapping if table tile > threshold
+			if score > bestScore {
+				bestScore = score
+				bestTile = t
+				bestFromTable = true
+				bestIndex = i
+			}
+		}
+
+		if bestFromTable {
+			// Perform the swap with the *weakest* tile
+
+			weakestScore := baseScore(board.Grid[weakest.R][weakest.C], weakest.R, weakest.C)
+
+			// If there’s a weaker one, choose that
+			for _, w := range weakTiles {
+				s := baseScore(board.Grid[w.R][w.C], w.R, w.C)
+				if s < weakestScore {
+					weakest = w
+					weakestScore = s
+				}
+			}
+
+			if board.IsAi {
+				state.Table = append(state.Table[:bestIndex], state.Table[bestIndex+1:]...)
+				fmt.Printf("AI %d swaps weak tile %d at (%d,%d) with table tile %d (score %.3f)\n",
+					state.Current, board.Grid[weakest.R][weakest.C], weakest.R, weakest.C, bestTile, bestScore)
+			}
+
+			// Replace it on board
+			board.Grid[weakest.R][weakest.C] = bestTile
+			return bestTile, true
 		}
 	}
 
 	if board.IsAi {
 		if bestFromTable {
 			state.Table = append(state.Table[:bestIndex], state.Table[bestIndex+1:]...)
-			fmt.Printf("Computer %d draws %d from table\n", state.Current, bestTile)
+			fmt.Printf("AI %d draws %d from table\n", state.Current, bestTile)
 		} else {
+			bestTile = state.Draw[0]
 			state.Draw = state.Draw[1:]
-			fmt.Printf("Computer %d draws %d from pile\n", state.Current, bestTile)
+			fmt.Printf("AI %d draws %d from pile\n", state.Current, bestTile)
 		}
 	}
 
@@ -1116,6 +1178,10 @@ func main() {
 	csvFile = strings.TrimSpace(csvFile)
 
 	state := &GameState{}
+	/*for t := 1; t < 21; t++ {
+		state.printMap(t)
+	}*/
+
 	fmt.Print("Play or Analyze? (p/a): ")
 	mode, _ := reader.ReadString('\n')
 	mode = strings.TrimSpace(strings.ToLower(mode))
@@ -1133,7 +1199,6 @@ func main() {
 		}
 		fmt.Println("Loaded game from", csvFile)
 	} else {
-
 		state.setUpBoards()
 	}
 	state.BrunoVariant = promptBrunoVariant()
