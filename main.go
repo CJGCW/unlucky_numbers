@@ -94,8 +94,9 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 	return true
 }
 
-func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
+func (state *GameState) isPlacementFeasible(r, c, tile int) bool {
 	remaining := append(state.Draw, state.Table...)
+	board := state.Boards[state.Current]
 	// Check above
 	for rr := r - 1; rr >= 0; rr-- {
 		v := board.Grid[rr][c]
@@ -163,15 +164,15 @@ func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
 	return true
 }
 
-func (state *GameState) bestMoves(board *Board, tile int) []Move {
+func (state *GameState) bestMoves(tile int) []Move {
 	moves := []Move{}
-
+	board := state.Boards[state.Current]
 	for r := 0; r < BoardSize; r++ {
 		for c := 0; c < BoardSize; c++ {
 			current := board.Grid[r][c]
 
 			// --- Check legal placement without swap ---
-			feasible := state.isPlacementFeasible(board, r, c, tile)
+			feasible := state.isPlacementFeasible(r, c, tile)
 			//fmt.Printf("placing %d on %d, %d feasibility is %v\n", tile, r, c, feasible)
 			if current == 0 && feasible {
 				score := state.placementScore(tile, r, c, board)
@@ -727,7 +728,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 
 	// --- AI-controlled board auto-play ---
 	if board.IsAi {
-		recs := state.bestMoves(board, tile)
+		recs := state.bestMoves(tile)
 		if len(recs) == 0 {
 			// No legal moves, discard to table
 			state.applyMove(current, Move{Type: Discard}, tile)
@@ -770,7 +771,7 @@ func (state *GameState) promptPlacement(current, tile int) {
 			fmt.Println("Placed on table.")
 			return
 		case "r":
-			recs := state.bestMoves(board, tile)
+			recs := state.bestMoves(tile)
 			if len(recs) == 0 {
 				fmt.Println("No legal placements found.")
 				continue
@@ -887,7 +888,7 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 
 	for i, t := range state.Table {
 		// Evaluate this table tile’s best score on the board
-		moves := state.bestMoves(board, t)
+		moves := state.bestMoves(t)
 		if len(moves) == 0 {
 			continue
 		}
