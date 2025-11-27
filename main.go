@@ -49,32 +49,6 @@ type GameState struct {
 var reader = bufio.NewReader(os.Stdin)
 var threshold = .50
 
-// ---------------- Utility ----------------
-
-// remainingTiles returns a set of tiles that are not on any board or on the table
-func remainingTiles(state *GameState) map[int]bool {
-	used := map[int]bool{}
-	for _, b := range state.Boards {
-		for r := 0; r < BoardSize; r++ {
-			for c := 0; c < BoardSize; c++ {
-				if b.Grid[r][c] != 0 {
-					used[b.Grid[r][c]] = true
-				}
-			}
-		}
-	}
-	for _, t := range state.Table {
-		used[t] = true
-	}
-	remaining := map[int]bool{}
-	for i := 1; i <= BoardSize*5; i++ { // 1-20 normally
-		if !used[i] {
-			remaining[i] = true
-		}
-	}
-	return remaining
-}
-
 func isLegalPlacement(board *Board, val, r, c int) bool {
 
 	// Check column above
@@ -118,34 +92,6 @@ func isLegalPlacement(board *Board, val, r, c int) bool {
 	}
 
 	return true
-}
-
-// ---------------- AI Evaluation ----------------
-func placementScore(tile, r, c int) float64 {
-	// Normalize row/col and tile into [0, 1] range
-	rowNorm := float64(r) / float64(BoardSize-1)         // 0 at top, 1 at bottom
-	colNorm := float64(c) / float64(BoardSize-1)         // 0 at left, 1 at right
-	posNorm := (rowNorm + colNorm) / 2.0                 // average positional "depth"
-	tileNorm := float64(tile-1) / float64(BoardSize*5-1) // 0 for 1, 1 for 20
-
-	// The ideal position for a tile should roughly match its tile value
-	// So we use 1 - |tileNorm - posNorm| to measure how aligned they are.
-	alignment := 1.0 - math.Abs(tileNorm-posNorm)
-
-	// Apply a weighting curve so edge placements are slightly devalued
-	edgePenalty := 1.0 - 0.2*math.Abs(0.5-posNorm)*2.0 // center slightly preferred
-
-	// Combine
-	score := alignment * edgePenalty
-
-	// Clamp and normalize
-	if score < 0 {
-		score = 0
-	} else if score > 1 {
-		score = 1
-	}
-
-	return score
 }
 
 func (state *GameState) isPlacementFeasible(board *Board, r, c, tile int) bool {
@@ -294,8 +240,8 @@ func CellScore(r, c, t int, alpha float64) float64 {
 func (state *GameState) placementScore(tile, r, c int, board *Board) float64 {
 	base := baseScore(tile, r, c)
 
-	rowProb := state.futureRowProbability(board, r, c, tile)
-	colProb := state.futureColProbability(board, r, c, tile)
+	rowProb := state.futureRowProbability(board, r, c)
+	colProb := state.futureColProbability(board, r, c)
 	//fmt.Printf("Tile %d at [%d,%d] has a base score of %v, RowProb of %v, and colProb of %v\n", tile, r, c, base, rowProb, colProb)
 	return base * rowProb * colProb
 }
@@ -325,9 +271,9 @@ func (state *GameState) weakTiles() []Cell {
 
 }
 
-func (state *GameState) printMap(tile int) {
+func (state *GameState) printMap(tile int, board *Board) {
 	fmt.Printf("tile %d ", tile)
-	fmt.Println("Base")
+	fmt.Println("Base score")
 	for r := 0; r < BoardSize; r++ {
 
 		for c := 0; c < BoardSize; c++ {
@@ -339,12 +285,12 @@ func (state *GameState) printMap(tile int) {
 		fmt.Println()
 		fmt.Println("____________________________________")
 	}
-	fmt.Println("Placement")
+	fmt.Println("Score considering current tile placements")
 	for r := 0; r < BoardSize; r++ {
 
 		for c := 0; c < BoardSize; c++ {
 			fmt.Print("| ")
-			score := placementScore(tile, r, c)
+			score := state.placementScore(tile, r, c, board)
 			fmt.Printf("%5.2f", score)
 			fmt.Print("| ")
 		}
@@ -354,7 +300,7 @@ func (state *GameState) printMap(tile int) {
 }
 
 // Compute probability row can be filled with remaining tiles
-func (state *GameState) futureRowProbability(board *Board, r, c, tile int) float64 {
+func (state *GameState) futureRowProbability(board *Board, r, c int) float64 {
 	prob := 1.0
 	for cc := 0; cc < BoardSize; cc++ {
 		if cc == c || board.Grid[r][cc] != 0 {
@@ -372,7 +318,7 @@ func (state *GameState) futureRowProbability(board *Board, r, c, tile int) float
 	return prob
 }
 
-func (state *GameState) futureColProbability(board *Board, r, c, tile int) float64 {
+func (state *GameState) futureColProbability(board *Board, r, c int) float64 {
 	prob := 1.0
 	for rr := 0; rr < BoardSize; rr++ {
 		if rr == r || board.Grid[rr][c] != 0 {
@@ -500,6 +446,7 @@ func (state *GameState) applyMove(current int, move Move, tile int) bool {
 		return false
 	}
 	if board.IsFull() {
+		state.PrettyPrintBoardsGridCentered()
 		fmt.Println("GAME OVER!")
 		os.Exit(0)
 	}
@@ -621,10 +568,11 @@ func (state *GameState) initDrawStack(totalPlayers int) {
 	})
 }
 
-func fillRandomDiagonal(b *Board) {
-	available := rand.Perm(20)
+func (state *GameState) fillRandomDiagonal(board *Board) {
 	for i := 0; i < BoardSize; i++ {
-		b.Grid[i][i] = available[i] + 1
+		tile := state.Draw[0]
+		state.Draw = state.Draw[1:]
+		board.Grid[i][i] = tile
 	}
 }
 
@@ -664,9 +612,6 @@ func (state *GameState) setUpBoards() {
 	if totalPlayers > 4 {
 		fmt.Println("Max players is 4 — adjusting to 4")
 		totalPlayers = 4
-		if numAI > 4-numHumans {
-			numAI = 4 - numHumans
-		}
 	}
 	if !state.Analyze {
 		state.initDrawStack(totalPlayers)
@@ -691,7 +636,7 @@ func (state *GameState) setUpBoards() {
 			input, _ := reader.ReadString('\n')
 			input = strings.TrimSpace(input)
 			if input == "" {
-				fillRandomDiagonal(b)
+				state.fillRandomDiagonal(b)
 			} else {
 				nums := strings.Fields(input)
 				for i := 0; i < BoardSize && i < len(nums); i++ {
@@ -702,7 +647,7 @@ func (state *GameState) setUpBoards() {
 				}
 			}
 		} else {
-			fillRandomDiagonal(b)
+			state.fillRandomDiagonal(b)
 		}
 
 		state.Boards = append(state.Boards, b)
@@ -830,8 +775,9 @@ func (state *GameState) promptPlacement(current, tile int) {
 				fmt.Println("No legal placements found.")
 				continue
 			}
+			state.printMap(tile, board)
 			for i, m := range recs {
-				fmt.Printf("%d) %s at (%d,%d) — score %.2f\n",
+				fmt.Printf("%d) %s at (%d,%d) — score %5.2f\n",
 					i+1,
 					map[MoveType]string{Place: "Place", Swap: "Swap"}[m.Type],
 					m.Cell.R, m.Cell.C, m.Score)
@@ -954,23 +900,6 @@ func (state *GameState) drawTileRecommendation() (tile int, fromTable bool) {
 			bestIndex = i
 		}
 	}
-
-	// Check table tiles for possible replacements
-	/*for i, t := range state.Table {
-		// Evaluate this table tile’s best score on the board
-		moves := state.bestMoves(board, t)
-		if len(moves) == 0 {
-			continue
-		}
-		score := moves[0].Score
-		// We only consider swapping if table tile > threshold
-		if score > bestScore {
-			bestScore = score
-			bestTile = t
-			bestFromTable = true
-			bestIndex = i
-		}
-	}*/
 
 	if bestFromTable {
 		if len(weakTiles) > 0 {
