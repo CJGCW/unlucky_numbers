@@ -112,6 +112,9 @@ func (state *GameState) isPlacementFeasible(r, c, tile int) bool {
 	// Check above
 	for rr := r - 1; rr >= 0; rr-- {
 		v := board.Grid[rr][c]
+		if v == 0 {
+			continue
+		}
 		if v >= tile || (rr < r-1 && !inRange(remainingLower, v, tile)) {
 			return false
 		}
@@ -121,6 +124,9 @@ func (state *GameState) isPlacementFeasible(r, c, tile int) bool {
 	// Check left
 	for cc := c - 1; cc >= 0; cc-- {
 		v := board.Grid[r][cc]
+		if v == 0 {
+			continue
+		}
 		if v >= tile || (cc < c-1 && !inRange(remainingLower, v, tile)) {
 			return false
 		}
@@ -180,7 +186,7 @@ func (state *GameState) bestMoves(tile int) []Move {
 				oldScore := state.placementScore(current, r, c)
 
 				// Only swap if significant improvement and feasible future
-				if newScore > oldScore*1.10 && newScore > 100*threshold { // at least 10% improvement
+				if newScore > oldScore*1.10 { // at least 10% improvement
 					//fmt.Printf("New score of %v was better than the old score of %v and the threshold of %v at (%d,%d)\n", newScore, oldScore, threshold, r, c)
 					moves = append(moves, Move{
 						Type:    Swap,
@@ -377,7 +383,6 @@ func (state *GameState) colConstraints(r, c int) (int, int) {
 	return min, max
 }
 
-/*
 // getRemainingTileCounts excludes opponent tiles from availability
 func getRemainingTileCounts(state *GameState, myBoard *Board) map[int]int {
 	counts := make(map[int]int)
@@ -420,23 +425,22 @@ func (state *GameState) applyMove(move Move) bool {
 	current := state.Current
 	board := state.Boards[current]
 	tile := move.Tile
-	prettyType := "nothing?"
-	switch move.Type {
-	case Place:
-		prettyType = "placing"
-	case Swap:
-		prettyType = "swapping"
+	if board.IsAi {
+		prettyType := "nothing?"
+		switch move.Type {
+		case Place:
+			prettyType = "placing"
+		case Swap:
+			prettyType = "swapping"
 
-	case Discard:
-		prettyType = "discarding"
-	}
-	if move.Type == Discard {
-		fmt.Printf("Computer %d is %v tile %d\n", current, prettyType, move.Tile)
-	} else {
-		fmt.Printf("Computer %d is %v tile %d, (%d,%d)\n", current, prettyType, move.Tile, move.Cell.R, move.Cell.C)
-	}
-	if tile == 0 {
-		return false
+		case Discard:
+			prettyType = "discarding"
+		}
+		if move.Type == Discard {
+			fmt.Printf("Computer %d is %v tile %d\n", current, prettyType, move.Tile)
+		} else {
+			fmt.Printf("Computer %d is %v tile %d, (%d,%d)\n", current, prettyType, move.Tile, move.Cell.R, move.Cell.C)
+		}
 	}
 	switch move.Type {
 	case Place:
@@ -448,7 +452,6 @@ func (state *GameState) applyMove(move Move) bool {
 		state.Table = append(state.Table, old)
 	case Discard:
 		state.Table = append(state.Table, tile)
-		fmt.Printf("%d Discarded somehow to table.\n", tile)
 		return false
 	}
 	if board.IsFull() {
@@ -666,10 +669,6 @@ func (state *GameState) setUpBoards() {
 
 		state.Boards = append(state.Boards, b)
 	}
-	/*state.PrettyPrintBoardsGridCentered()
-	for i := 0; i < len(state.Draw); i++ {
-		fmt.Printf("%d in pile is tile %d\n", i, state.Draw[i])
-	}*/
 }
 
 func promptBrunoVariant() bool {
@@ -687,11 +686,13 @@ func (state *GameState) playGame() {
 		bestFromTable := false
 		if board.IsAi {
 			move, bestFromTable = state.drawTileRecommendation()
-			if !bestFromTable {
-				fmt.Println("Computer draws from pile")
-				move = state.drawTile()
-			} else {
+			if bestFromTable {
 				fmt.Printf("Computer is drawing %d from the table\n", move.Tile)
+				state.removeTileFromTable(move.Tile)
+			} else {
+
+				fmt.Print("Computer draws from pile ")
+				move = state.drawTile()
 			}
 		} else {
 			var quit bool
@@ -701,8 +702,6 @@ func (state *GameState) playGame() {
 				return
 			}
 		}
-		fmt.Println("calling Prompt placement from playGame")
-		// Unified placement for both human and Computer
 		state.promptPlacement(move)
 
 		state.PrettyPrintBoardsGridCentered()
@@ -755,21 +754,6 @@ func (state *GameState) promptPlacement(move Move) {
 	// --- Computer-controlled board auto-play ---
 	if board.IsAi {
 		if move.Type != Draw {
-			prettyType := "nothing?"
-			switch move.Type {
-			case Place:
-				prettyType = "placing"
-			case Swap:
-				prettyType = "swapping"
-
-			case Discard:
-				prettyType = "discarding"
-			}
-			if move.Type == Discard {
-				fmt.Printf("Computer %d is %v tile %d\n", current, prettyType, tile)
-			} else {
-				fmt.Printf("Computer %d is %v tile %d, (%d,%d)\n", current, prettyType, tile, move.Cell.R, move.Cell.C)
-			}
 			state.applyMove(move)
 			return
 		}
@@ -784,28 +768,9 @@ func (state *GameState) promptPlacement(move Move) {
 
 		// Pick best move
 		move := recs[0]
-
-		fmt.Println("before move")
-		//state.PrettyPrintBoardsGridCentered()
-		prettyType := "nothing?"
-		switch move.Type {
-		case Place:
-			prettyType = "placing"
-		case Swap:
-			prettyType = "swapping"
-
-		case Discard:
-			prettyType = "discarding"
-		}
-		if move.Type == Discard {
-			fmt.Printf("Computer %d is %v tile %d\n", current, prettyType, tile)
-		} else {
-			fmt.Printf("Computer %d is %v tile %d, (%d,%d)\n", current, prettyType, tile, move.Cell.R, move.Cell.C)
-		}
 		extra := state.applyMove(move)
 
 		fmt.Println("after move")
-		//state.PrettyPrintBoardsGridCentered()
 
 		if extra {
 			fmt.Println("Computer gets extra turn!")
@@ -943,60 +908,6 @@ func (state *GameState) promptDrawOrSave() (Move, bool) {
 	}
 }
 
-/*
-	func (state *GameState) drawTileRecommendation() (Move, bool) {
-		// return a tile and if it is recommended to swap.
-		//board := state.Boards[state.Current]
-
-		bestScore := threshold
-		bestMove := Move{}
-		bestFromTable := false
-
-		// --- Step 1: Look for weak tiles ---
-		//weakTiles := state.weakTiles()
-
-		for i, t := range state.Table {
-			// Evaluate this table tile’s best score on the board
-			moves := state.bestMoves(t)
-			if len(moves) == 0 {
-				continue
-			}
-			score := moves[i].Score
-
-			if score > bestScore {
-				//fmt.Printf("New score of %v was better than the old score of %v", score, bestScore)
-				bestScore = score
-				bestMove = moves[i]
-				bestFromTable = true
-
-			}
-		}
-
-		/*if bestFromTable {
-
-			if len(weakTiles) > 0 {
-
-				weakest := weakTiles[0]
-				// Perform the swap with the *weakest* tile
-				weakestTile := board.Grid[weakest.R][weakest.C]
-				weakestScore := baseScore(weakestTile, weakest.R, weakest.C)
-
-				// If there’s a weaker one, choose that
-				for _, w := range weakTiles {
-					tile := board.Grid[w.R][w.C]
-					s := baseScore(tile, w.R, w.C)
-					if s < weakestScore {
-						weakest = w
-						weakestScore = s
-						weakestTile = tile
-						bestMove = Move{Tile: tile, Cell: &w, Type: Swap}
-					}
-				}
-			}
-		}
-		return bestMove, bestFromTable
-	}
-*/
 func (state *GameState) drawTileRecommendation() (Move, bool) {
 
 	bestScore := threshold
@@ -1040,12 +951,7 @@ func (state *GameState) drawTile() Move {
 					fmt.Println("Invalid choice.")
 					return state.drawTile()
 				}
-				for i, v := range state.Table {
-					if v == tile {
-						state.Table = append(state.Table[:i], state.Table[i+1:]...)
-						break
-					}
-				}
+				state.removeTileFromTable(tile)
 				return Move{Tile: tile, Type: Draw}
 			}
 		}
@@ -1058,6 +964,14 @@ func (state *GameState) drawTile() Move {
 	state.Draw = state.Draw[1:]
 	fmt.Printf(" drew a %d\n", tile)
 	return Move{Tile: tile, Type: Draw}
+}
+func (state *GameState) removeTileFromTable(tile int) {
+	for i, v := range state.Table {
+		if v == tile {
+			state.Table = append(state.Table[:i], state.Table[i+1:]...)
+			break
+		}
+	}
 }
 
 func (state *GameState) saveToCSV(filename string) error {
@@ -1201,10 +1115,7 @@ func main() {
 	csvFile := "" //strings.TrimSpace(csvFile)
 
 	state := &GameState{}
-	/*for t := 1; t < 21; t++ {
-		state.printMap(t)
-	}*/
-
+	
 	//fmt.Print("Play or Analyze? (p/a): ")
 	//mode, _ := reader.ReadString('\n')
 	mode := "p"
