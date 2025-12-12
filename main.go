@@ -31,7 +31,7 @@ type Move struct {
 	Cell    *Cell
 	Tile    int
 	OldTile int     // only set if Type==Swap
-	Score   float64 // for ranking
+	Score   float64 // for ranking which moves are "best"
 }
 
 type Board struct {
@@ -45,58 +45,13 @@ type GameState struct {
 	Draw         []int
 	Analyze      bool // analysis mode aka we tell it what numbers we draw.
 	BrunoVariant bool
-	Current      int //track player turns for save/load actions
+	Current      int
 }
 
 var reader = bufio.NewReader(os.Stdin)
 var threshold = .50
 
-func (board *Board) isLegalPlacement(val, r, c int) bool {
-
-	// Check column above
-	for rr := r - 1; rr >= 0; rr-- {
-		if board.Grid[rr][c] != 0 {
-			if val <= board.Grid[rr][c] {
-				return false
-			}
-			break
-		}
-	}
-
-	// Check column below
-	for rr := r + 1; rr < BoardSize; rr++ {
-		if board.Grid[rr][c] != 0 {
-			if val >= board.Grid[rr][c] {
-				return false
-			}
-			break
-		}
-	}
-
-	// Check row left
-	for cc := c - 1; cc >= 0; cc-- {
-		if board.Grid[r][cc] != 0 {
-			if val <= board.Grid[r][cc] {
-				return false
-			}
-			break
-		}
-	}
-
-	// Check row right
-	for cc := c + 1; cc < BoardSize; cc++ {
-		if board.Grid[r][cc] != 0 {
-			if val >= board.Grid[r][cc] {
-				return false
-			}
-			break
-		}
-	}
-
-	return true
-}
-
-func (state *GameState) isPlacementFeasible(r, c, tile int) bool {
+func (state *GameState) isPlacementFeasible(tile, r, c int) bool {
 	remaining := append(state.Draw, state.Table...)
 	remainingHigher := []int{}
 	remainingLower := []int{}
@@ -167,9 +122,7 @@ func (state *GameState) bestMoves(tile int) []Move {
 		for c := 0; c < BoardSize; c++ {
 			current := board.Grid[r][c]
 
-			// --- Check legal placement without swap ---
-			feasible := state.isPlacementFeasible(r, c, tile)
-			//fmt.Printf("placing %d on %d, %d feasibility is %v\n", tile, r, c, feasible)
+			feasible := state.isPlacementFeasible(tile, r, c)
 			if current == 0 && feasible {
 				score := state.placementScore(tile, r, c)
 				moves = append(moves, Move{
@@ -180,14 +133,13 @@ func (state *GameState) bestMoves(tile int) []Move {
 				})
 			}
 
-			// --- Consider swap only if cell is occupied ---
+			// when the cell has a tile
 			if current != 0 && feasible {
 				newScore := state.placementScore(tile, r, c)
 				oldScore := state.placementScore(current, r, c)
 
 				// Only swap if significant improvement and feasible future
 				if newScore > oldScore*1.10 { // at least 10% improvement
-					//fmt.Printf("New score of %v was better than the old score of %v and the threshold of %v at (%d,%d)\n", newScore, oldScore, threshold, r, c)
 					moves = append(moves, Move{
 						Type:    Swap,
 						Cell:    &Cell{R: r, C: c},
@@ -209,18 +161,15 @@ func (state *GameState) bestMoves(tile int) []Move {
 	return moves
 }
 
+// score for how well tile t fits cell (r,c)
 func baseScore(tile, r, c int) float64 {
-	return CellScore(r+1, c+1, tile, 1.00) // TODO: remove this
+	alpha := 1.00 // this is a score tolerance
+	dCell := float64(2 + r + c)
+	diff := xOfT(tile) - dCell
+	return 100 * math.Exp(-alpha*diff*diff)
 }
 func xOfT(t int) float64 {
 	return 2.0 + 0.32*float64(t-1)
-}
-
-// score for how well time t fits cell (r,c)
-func CellScore(r, c, t int, alpha float64) float64 {
-	dCell := float64(r + c)
-	diff := xOfT(t) - dCell
-	return 100 * math.Exp(-alpha*diff*diff)
 }
 
 func (state *GameState) placementScore(tile, r, c int) float64 {
@@ -228,32 +177,6 @@ func (state *GameState) placementScore(tile, r, c int) float64 {
 	rowProb := state.futureRowProbability(r, c)
 	colProb := state.futureColProbability(r, c)
 	return base * rowProb * colProb
-}
-
-func (state *GameState) weakTiles() []Cell {
-	board := state.Boards[state.Current]
-	moves := []Cell{}
-
-	for r := 0; r < BoardSize; r++ {
-		for c := 0; c < BoardSize; c++ {
-			current := board.Grid[r][c]
-
-			if current == 0 {
-				continue
-			} else {
-				score := baseScore(current, r, c)
-				if score < threshold {
-					//fmt.Printf("New score of %v was worse than the threshold of %v for tile %d at (%d,%d)\n", score, threshold, current, r, c)
-					moves = append(moves, Cell{
-						R: r,
-						C: c,
-					})
-				}
-			}
-		}
-	}
-	return moves
-
 }
 
 func (state *GameState) printMap(tile int) {
@@ -284,7 +207,7 @@ func (state *GameState) printMap(tile int) {
 	}
 }
 
-// Compute probability row can be filled with remaining tiles
+// Compute probability row can be filled with unplayed tiles
 func (state *GameState) futureRowProbability(r, c int) float64 {
 	board := state.Boards[state.Current]
 	prob := 1.0
@@ -293,16 +216,17 @@ func (state *GameState) futureRowProbability(r, c int) float64 {
 			continue
 		}
 		dist := math.Abs(float64(cc - c))
-		weight := 1.0 / (dist + 1.0) // close cells weigh more
+		weight := 1.0 / (dist + 1.0)
 
 		min, max := state.rowConstraints(r, cc)
 		p := state.remainingProbability(min, max)
 
-		// soften extreme effects
 		prob *= 1 - weight*(1-p)
 	}
 	return prob
 }
+
+// Compute probability row can be filled with unplayed tiles
 
 func (state *GameState) futureColProbability(r, c int) float64 {
 	prob := 1.0
@@ -382,44 +306,6 @@ func (state *GameState) colConstraints(r, c int) (int, int) {
 	}
 	return min, max
 }
-
-// getRemainingTileCounts excludes opponent tiles from availability
-func getRemainingTileCounts(state *GameState, myBoard *Board) map[int]int {
-	counts := make(map[int]int)
-	numPlayers := len(state.Boards)
-	for i := 1; i <= 20; i++ {
-		counts[i] = 2 * numPlayers // two sets per player
-	}
-
-	for _, b := range state.Boards {
-		for r := 0; r < BoardSize; r++ {
-			for c := 0; c < BoardSize; c++ {
-				if b.Grid[r][c] != 0 {
-					if b == myBoard {
-						// decrement normally
-						counts[b.Grid[r][c]]--
-					} else {
-						// opponent tiles are "locked" — remove from remaining
-						counts[b.Grid[r][c]] = 0
-					}
-				}
-			}
-		}
-	}
-
-	for _, d := range state.Draw {
-		counts[d]--
-	}
-
-	// Make sure no negative counts
-	for k, v := range counts {
-		if v < 0 {
-			counts[k] = 0
-		}
-	}
-	return counts
-}
-*/
 
 func (state *GameState) applyMove(move Move) bool {
 	current := state.Current
@@ -585,7 +471,7 @@ func (state *GameState) initDrawStack(totalPlayers int) {
 	})
 }
 
-func (state *GameState) fillRandomDiagonal(board *Board) { //Todo: just set them all up in this function.
+func (state *GameState) fillRandomDiagonal(board *Board) {
 	for i := 0; i < BoardSize; i++ {
 		tile := state.Draw[0]
 		state.Draw = state.Draw[1:]
@@ -595,13 +481,13 @@ func (state *GameState) fillRandomDiagonal(board *Board) { //Todo: just set them
 
 func (state *GameState) setUpBoards() {
 	// --- Ask number of human and Computer players ---
-	numHumans := 0
+	numHumans := 1
 	fmt.Print("Number of human players (1-4, default 1): ")
 	line, _ := reader.ReadString('\n')
 	line = strings.TrimSpace(line)
 	if line != "" {
 		n, err := strconv.Atoi(line)
-		if err == nil && n >= 0 && n <= 4 {
+		if err == nil && n >= 1 && n <= 4 {
 			numHumans = n
 		} else {
 			numHumans = 1
@@ -610,7 +496,7 @@ func (state *GameState) setUpBoards() {
 		numHumans = 0
 	}
 
-	numAI := 0
+	numAI := 1
 	fmt.Print("Number of computer players (0-4, default 1): ")
 	line, _ = reader.ReadString('\n')
 	line = strings.TrimSpace(line)
@@ -765,13 +651,9 @@ func (state *GameState) promptPlacement(move Move) {
 			fmt.Printf("Computer %d discards %d to table.\n", current, tile)
 			return
 		}
-
 		// Pick best move
 		move := recs[0]
 		extra := state.applyMove(move)
-
-		fmt.Println("after move")
-
 		if extra {
 			fmt.Println("Computer gets extra turn!")
 			move, _ = state.drawTileRecommendation()
@@ -780,7 +662,7 @@ func (state *GameState) promptPlacement(move Move) {
 
 		return
 	}
-	fmt.Println("shouldn't be here.")
+
 	// --- Human player flow continues unchanged ---
 	for {
 		fmt.Printf("Action for %d? ([r]ecommend, [d]iscard, or row,col): ", tile)
@@ -827,7 +709,7 @@ func (state *GameState) promptPlacement(move Move) {
 				r, err1 := strconv.Atoi(strings.TrimSpace(parts[0]))
 				c, err2 := strconv.Atoi(strings.TrimSpace(parts[1]))
 				if err1 == nil && err2 == nil && r >= 0 && r < BoardSize && c >= 0 && c < BoardSize {
-					if board.isLegalPlacement(tile, r, c) {
+					if state.isPlacementFeasible(tile, r, c) {
 						move := Move{Type: Place, Cell: &Cell{R: r, C: c}}
 						old := board.Grid[r][c]
 						fmt.Println("HOW DID I GET HERE!?")
@@ -900,7 +782,6 @@ func (state *GameState) promptDrawOrSave() (Move, bool) {
 			if move.Type == Place {
 				fmt.Printf("Placing tile %d from the table into (%d,%d) is the best choice\n", move.Tile, move.Cell.R, move.Cell.C)
 			}
-			// TODO Prompt if the player wants to apply the move.
 
 		default:
 			fmt.Println("Invalid option.")
@@ -1110,15 +991,14 @@ func (state *GameState) loadFromCSV(filename string) error {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	//fmt.Print("Load from CSV file? (filename or blank for new game): ")
-	//csvFile, _ := reader.ReadString('\n')
-	csvFile := "" //strings.TrimSpace(csvFile)
+	fmt.Print("Load from CSV file? (filename or blank for new game): ")
+	csvFile, _ := reader.ReadString('\n')
+	csvFile = strings.TrimSpace(csvFile)
 
 	state := &GameState{}
-	
-	//fmt.Print("Play or Analyze? (p/a): ")
-	//mode, _ := reader.ReadString('\n')
-	mode := "p"
+
+	fmt.Print("Play or Analyze? (p/a): ")
+	mode, _ := reader.ReadString('\n')
 	mode = strings.TrimSpace(strings.ToLower(mode))
 	if mode == "a" || mode == "analyze" {
 		state.Analyze = true
