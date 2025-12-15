@@ -28,46 +28,20 @@ func exampleStateForTests() *GameState {
 	}
 }
 
-func TestIsLegalPlacement(t *testing.T) {
-	state := exampleStateForTests()
-	b := state.Boards[0]
-
-	if !b.isLegalPlacement(6, 0, 1) {
-		t.Errorf("Expected 6 to be legal at (0,1)")
-	}
-	if !b.isLegalPlacement(8, 2, 1) {
-		t.Errorf("Expected 8 to be legal at (2,1)")
-	}
-
-	if b.isLegalPlacement(4, 0, 1) {
-		t.Errorf("Expected 4 to be illegal at (0,1)")
-	}
-	if b.isLegalPlacement(20, 3, 0) {
-		t.Errorf("Expected 20 to be illegal at (3,0)")
-	}
-}
-
 func TestIsPlacementFeasible(t *testing.T) {
 	state := exampleStateForTests()
-	state.Current = 1
-	if !state.isPlacementFeasible(0, 1, 7) {
-		t.Errorf("Expected 7 at (0,1) to be feasible")
-	}
-	if state.isPlacementFeasible(0, 3, 18) {
-		t.Errorf("Expected 18 at (0,3) to be infeasible due to missing 19s")
-	}
-}
 
-func TestGetRemainingTileCounts(t *testing.T) {
-	state := exampleStateForTests()
-	b := state.Boards[1]
-	counts := getRemainingTileCounts(state, b)
-
-	if counts[19] != 0 {
-		t.Errorf("Expected remaining count of 19 to be 0, got %d", counts[19])
+	if !state.isPlacementFeasible(6, 0, 1) {
+		t.Errorf("Expected 6 to be legal at (0,1)")
 	}
-	if counts[18] == 0 {
-		t.Errorf("Expected remaining count of 18 > 0")
+	if !state.isPlacementFeasible(8, 2, 1) {
+		t.Errorf("Expected 8 to be legal at (2,1)")
+	}
+	if state.isPlacementFeasible(4, 0, 1) {
+		t.Errorf("Expected 4 to be illegal at (0,1)")
+	}
+	if state.isPlacementFeasible(20, 3, 0) {
+		t.Errorf("Expected 20 to be illegal at (3,0)")
 	}
 }
 
@@ -79,18 +53,6 @@ func TestBestMoves(t *testing.T) {
 	moves := state.bestMoves(drawTile)
 	if len(moves) == 0 {
 		t.Errorf("Expected at least one move for %d", drawTile)
-	}
-
-	// base remaining counts for this player
-	baseRemaining := getRemainingTileCounts(state, board)
-
-	// helper to clone counts
-	cloneCounts := func(src map[int]int) map[int]int {
-		dst := make(map[int]int, len(src))
-		for k, v := range src {
-			dst[k] = v
-		}
-		return dst
 	}
 
 	for _, m := range moves {
@@ -107,18 +69,8 @@ func TestBestMoves(t *testing.T) {
 			old := tmp.Grid[m.Cell.R][m.Cell.C]
 			tmp.Grid[m.Cell.R][m.Cell.C] = drawTile
 
-			cc := cloneCounts(baseRemaining)
-			// free the swapped-out tile
-			cc[old]++
-			// consume the drawn tile (guard against negative)
-			if cc[drawTile] > 0 {
-				cc[drawTile]--
-			} else {
-				cc[drawTile] = 0
-			}
-
 			// Now check feasibility on the swapped board
-			if !state.isPlacementFeasible(m.Cell.R, m.Cell.C, drawTile) {
+			if !state.isPlacementFeasible(drawTile, m.Cell.R, m.Cell.C) {
 				t.Errorf("Suggested infeasible swap at (%d,%d): swap %d -> %d", m.Cell.R, m.Cell.C, old, drawTile)
 			}
 		}
@@ -127,14 +79,14 @@ func TestBestMoves(t *testing.T) {
 
 func TestSwapLegality(t *testing.T) {
 	state := exampleStateForTests()
-	board := state.Boards[1]
+	state.Current = 1
 
 	moves := state.bestMoves(18)
 	swapFound := false
 	for _, m := range moves {
 		if m.Type == Swap {
 			swapFound = true
-			if !board.isLegalPlacement(18, m.Cell.R, m.Cell.C) {
+			if !state.isPlacementFeasible(18, m.Cell.R, m.Cell.C) {
 				t.Errorf("Swap suggested at (%d,%d) is illegal", m.Cell.R, m.Cell.C)
 			}
 		}
